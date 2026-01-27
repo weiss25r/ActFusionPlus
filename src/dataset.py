@@ -8,107 +8,121 @@ from scipy.interpolate import interp1d
 from .utils import get_labels_start_end_time
 from scipy.ndimage import gaussian_filter1d
 
-def get_data_dict(feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None):
+class VideoProcessor():
+    def __init__(self, feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None):
+        self.feature_dir = feature_dir
+        self.label_dir = label_dir
+        self.video_list = video_list
+        self.event_list = event_list
+        self.sample_rate = sample_rate
+        self.temporal_aug = temporal_aug
+        self.boundary_smooth = boundary_smooth
+        
+    def get_data_dict(self):
+        assert(self.sample_rate > 0)
 
-    assert(sample_rate > 0)
+        data_dict = {k:{
+            'feature': None,
+            'event_seq_raw': None,
+            'event_seq_ext': None,
+            'boundary_seq_raw': None,
+            'boundary_seq_ext': None,
+            } for k in self.video_list
+        }
 
-    data_dict = {k:{
-        'feature': None,
-        'event_seq_raw': None,
-        'event_seq_ext': None,
-        'boundary_seq_raw': None,
-        'boundary_seq_ext': None,
-        } for k in video_list
-    }
+        print(f'Loading Dataset ...')
 
-    print(f'Loading Dataset ...')
+        for video in tqdm(self.video_list):
 
-    for video in tqdm(video_list):
+            feature_file = os.path.join(self.feature_dir, '{}.npy'.format(video))
+            event_file = os.path.join(self.label_dir, '{}.txt'.format(video))
 
-        feature_file = os.path.join(feature_dir, '{}.npy'.format(video))
-        event_file = os.path.join(label_dir, '{}.txt'.format(video))
+            event = np.loadtxt(event_file, dtype=str)
+            frame_num = len(event)
 
-        event = np.loadtxt(event_file, dtype=str)
-        frame_num = len(event)
+            event_seq_raw = np.zeros((frame_num,))
+            for i in range(frame_num):
+                if event[i] in self.event_list:
+                    event_seq_raw[i] = self.event_list.index(event[i])
+                else:
+                    event_seq_raw[i] = -100  # background
 
-        event_seq_raw = np.zeros((frame_num,))
-        for i in range(frame_num):
-            if event[i] in event_list:
-                event_seq_raw[i] = event_list.index(event[i])
+            boundary_seq_raw = self.get_boundary_seq(event_seq_raw, self.boundary_smooth)
+            
+
+            data_dict[video]['feature_path'] = feature_file
+            data_dict[video]['event_seq_raw'] = event_seq_raw
+            data_dict[video]['boundary_seq_raw'] = boundary_seq_raw
+        
+        self.data_dict = data_dict
+        return data_dict
+
+    def preprocess_video(self, video):
+            feature = np.load(self.data_dict[video]['feature_path'], allow_pickle=True)
+
+            if len(feature.shape) == 3:
+                feature = np.swapaxes(feature, 0, 1)
+            elif len(feature.shape) == 2:
+                feature = np.swapaxes(feature, 0, 1)
+                feature = np.expand_dims(feature, 0)
             else:
-                event_seq_raw[i] = -100  # background
+                raise Exception('Invalid Feature.')
+            
+            assert(feature.shape[1] == self.data_dict[video]['event_seq_raw'].shape[0])
+            assert(feature.shape[1] == self.data_dict[video]['boundary_seq_raw'].shape[0])
 
-        boundary_seq_raw = get_boundary_seq(event_seq_raw, boundary_smooth)
+            if self.temporal_aug:
 
-        feature = np.load(feature_file, allow_pickle=True)
+                feature = [
+                    feature[:,offset::self.sample_rate,:]
+                    for offset in range(self.sample_rate)
+                ]
 
-        if len(feature.shape) == 3:
-            feature = np.swapaxes(feature, 0, 1)
-        elif len(feature.shape) == 2:
-            feature = np.swapaxes(feature, 0, 1)
-            feature = np.expand_dims(feature, 0)
-        else:
-            raise Exception('Invalid Feature.')
+                event_seq_ext = [
+                    self.data_dict[video]['event_seq_raw'][offset::self.sample_rate]
+                    for offset in range(self.sample_rate)
+                ]
 
-        assert(feature.shape[1] == event_seq_raw.shape[0])
-        assert(feature.shape[1] == boundary_seq_raw.shape[0])
+                boundary_seq_ext = [
+                    self.data_dict[video]['boundary_seq_raw'][offset::self.sample_rate]
+                    for offset in range(self.sample_rate)
+                ]
 
-        if temporal_aug:
+            else:
+                feature = [feature[:,::self.sample_rate,:]]
+                event_seq_ext = [self.data_dict[video]['event_seq_raw'][::self.sample_rate]]
+                boundary_seq_ext = [self.data_dict[video]['boundary_seq_raw'][::self.sample_rate]]
+            return {
+                'feature': [torch.from_numpy(i).float() for i in feature],
+                'event_seq_ext': [torch.from_numpy(i).float() for i in event_seq_ext],
+                'boundary_seq_ext': [torch.from_numpy(i).float() for i in boundary_seq_ext]
+            }
 
-            feature = [
-                feature[:,offset::sample_rate,:]
-                for offset in range(sample_rate)
-            ]
+    def get_boundary_seq(self, event_seq, boundary_smooth=None):
 
-            event_seq_ext = [
-                event_seq_raw[offset::sample_rate]
-                for offset in range(sample_rate)
-            ]
+        boundary_seq = np.zeros_like(event_seq)
 
-            boundary_seq_ext = [
-                boundary_seq_raw[offset::sample_rate]
-                for offset in range(sample_rate)
-            ]
+        _, start_times, end_times = get_labels_start_end_time([str(int(i)) for i in event_seq])
+        boundaries = start_times[1:]
+        assert min(boundaries) > 0
+        boundary_seq[boundaries] = 1
+        boundary_seq[[i-1 for i in boundaries]] = 1
 
-        else:
-            feature = [feature[:,::sample_rate,:]]
-            event_seq_ext = [event_seq_raw[::sample_rate]]
-            boundary_seq_ext = [boundary_seq_raw[::sample_rate]]
+        if boundary_smooth is not None:
+            boundary_seq = gaussian_filter1d(boundary_seq, boundary_smooth)
 
-        data_dict[video]['feature'] = [torch.from_numpy(i).float() for i in feature]
-        data_dict[video]['event_seq_raw'] = torch.from_numpy(event_seq_raw).float()
-        data_dict[video]['event_seq_ext'] = [torch.from_numpy(i).float() for i in event_seq_ext]
-        data_dict[video]['boundary_seq_raw'] = torch.from_numpy(boundary_seq_raw).float()
-        data_dict[video]['boundary_seq_ext'] = [torch.from_numpy(i).float() for i in boundary_seq_ext]
+            # Normalize. This is ugly.
+            temp_seq = np.zeros_like(boundary_seq)
+            temp_seq[temp_seq.shape[0] // 2] = 1
+            temp_seq[temp_seq.shape[0] // 2 - 1] = 1
+            norm_z = gaussian_filter1d(temp_seq, boundary_smooth).max()
+            boundary_seq[boundary_seq > norm_z] = norm_z
+            boundary_seq /= boundary_seq.max()
 
-    return data_dict
-
-def get_boundary_seq(event_seq, boundary_smooth=None):
-
-    boundary_seq = np.zeros_like(event_seq)
-
-    _, start_times, end_times = get_labels_start_end_time([str(int(i)) for i in event_seq])
-    boundaries = start_times[1:]
-    assert min(boundaries) > 0
-    boundary_seq[boundaries] = 1
-    boundary_seq[[i-1 for i in boundaries]] = 1
-
-    if boundary_smooth is not None:
-        boundary_seq = gaussian_filter1d(boundary_seq, boundary_smooth)
-
-        # Normalize. This is ugly.
-        temp_seq = np.zeros_like(boundary_seq)
-        temp_seq[temp_seq.shape[0] // 2] = 1
-        temp_seq[temp_seq.shape[0] // 2 - 1] = 1
-        norm_z = gaussian_filter1d(temp_seq, boundary_smooth).max()
-        boundary_seq[boundary_seq > norm_z] = norm_z
-        boundary_seq /= boundary_seq.max()
-
-    return boundary_seq
+        return boundary_seq
 
 
 def restore_full_sequence(x, full_len, left_offset, right_offset, sample_rate):
-
     frame_ticks = np.arange(left_offset, full_len-right_offset, sample_rate)
     full_ticks = np.arange(frame_ticks[0], frame_ticks[-1]+1, 1)
 
@@ -127,14 +141,15 @@ def restore_full_sequence(x, full_len, left_offset, right_offset, sample_rate):
 
 
 class VideoFeatureDataset(Dataset):
-    def __init__(self, data_dict, class_num, mode):
+    def __init__(self, video_processor_params, class_num, mode):
         super(VideoFeatureDataset, self).__init__()
 
         assert(mode in ['train', 'test'])
 
-        self.data_dict = data_dict
         self.class_num = class_num
         self.mode = mode
+        self.video_processor = VideoProcessor(**video_processor_params)
+        self.data_dict = self.video_processor.get_data_dict()
         self.video_list = [i for i in self.data_dict.keys()]
 
     def get_class_weights(self):
@@ -155,12 +170,14 @@ class VideoFeatureDataset(Dataset):
 
         video = self.video_list[idx]
 
+        preprocessed_video = self.video_processor.preprocess_video(
+            video=video
+        )
+        feature = preprocessed_video['feature']
+        label = preprocessed_video['event_seq_ext']
+        boundary = preprocessed_video['boundary_seq_ext']
+
         if self.mode == 'train':
-
-            feature = self.data_dict[video]['feature']
-            label = self.data_dict[video]['event_seq_ext']
-            boundary = self.data_dict[video]['boundary_seq_ext']
-
             temporal_aug_num = len(feature)
             temporal_rid = random.randint(0, temporal_aug_num - 1) # a<=x<=b
             feature = feature[temporal_rid]
@@ -177,11 +194,6 @@ class VideoFeatureDataset(Dataset):
             boundary /= boundary.max()  # normalize again
 
         if self.mode == 'test':
-
-            feature = self.data_dict[video]['feature']
-            label = self.data_dict[video]['event_seq_raw']
-            boundary = self.data_dict[video]['boundary_seq_ext']  # boundary_seq_raw not used
-
             feature = [torch.swapaxes(i, 1, 2) for i in feature]  # [10 x F x T]
             label = label.unsqueeze(0)   # 1 X T'
             boundary = [i.unsqueeze(0).unsqueeze(0) for i in boundary]   # [1 x 1 x T]

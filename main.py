@@ -6,9 +6,10 @@ import torch
 import argparse
 import numpy as np
 
-from src.dataset import get_data_dict, VideoFeatureDataset
-from src.utils import load_config_file, read_mapping_dict
+from src.dataset import VideoFeatureDataset
+from src.utils import read_mapping_dict
 from src.trainer import Trainer
+from src.config import ActFusionConfig
 
 import wandb
 import random
@@ -37,9 +38,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    all_params = load_config_file(args.config)
-    locals().update(all_params)
-    
+    config = ActFusionConfig(config_file=args.config)
+    all_params = config.get_params()
+
     # Add pos, n_mask, and patch_size from config to args
     args.pos = all_params.get('pos', 'none')
     args.n_mask = all_params.get('n_mask', 10)
@@ -48,21 +49,24 @@ if __name__ == '__main__':
     naming = args.result_dir
     device = torch.device('cuda')
 
+    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+
+    print(device)
     if all_params['dataset_name'] == '50salads':
-        wandb.init(project='50s_diffusion_integrate')
+        wandb.init(project='50s_diffusion_integrate_++')
     elif all_params['dataset_name'] == 'gtea':
-        wandb.init(project='gtea_diffusion_integrate')
+        wandb.init(project='gtea_diffusion_integrate_++')
     else:
-        wandb.init(project='bf_diffusion_integrate')
+        wandb.init(project='bf_diffusion_integrate_++')
 
     wandb.run.name = args.result_dir
     wandb.config.update(vars(args), allow_val_change=True)
     wandb.config.update(all_params, allow_val_change=True)
 
-    feature_dir = os.path.join(root_data_dir, dataset_name, 'features')
-    label_dir = os.path.join(root_data_dir, dataset_name, 'groundTruth')
-    mapping_file = os.path.join(root_data_dir, dataset_name, 'mapping.txt')
-
+    feature_dir = os.path.join(all_params['root_data_dir'], all_params['dataset_name'], 'features')
+    label_dir = os.path.join(all_params['root_data_dir'], all_params['dataset_name'], 'groundTruth')
+    mapping_file = os.path.join(all_params['root_data_dir'], all_params['dataset_name'], 'mapping.txt')
+    print("mapping_file: ", mapping_file)
     actions_dict = read_mapping_dict(mapping_file)
 
     event_list = np.loadtxt(mapping_file, dtype=str)
@@ -72,45 +76,48 @@ if __name__ == '__main__':
     print("split: ",split)
 
     train_video_list = np.loadtxt(os.path.join(
-        root_data_dir, dataset_name, 'splits', f'train.split{split}.bundle'), dtype=str)
+        all_params['root_data_dir'], all_params['dataset_name'], 'splits', f'train.split{split}.bundle'), dtype=str)
     test_video_list = np.loadtxt(os.path.join(
-        root_data_dir, dataset_name, 'splits', f'test.split{split}.bundle'), dtype=str)
+        all_params['root_data_dir'], all_params['dataset_name'], 'splits', f'test.split{split}.bundle'), dtype=str)
 
     train_video_list = [i.split('.')[0] for i in train_video_list]
     test_video_list = [i.split('.')[0] for i in test_video_list]
 
     if not args.test:
-        train_data_dict = get_data_dict(
-            feature_dir=feature_dir,
-            label_dir=label_dir,
-            video_list=train_video_list,
-            event_list=event_list,
-            sample_rate=sample_rate,
-            temporal_aug=temporal_aug,
-            boundary_smooth=boundary_smooth
-        )
-        train_train_dataset = VideoFeatureDataset(train_data_dict, num_classes, mode='train')
-        train_test_dataset = VideoFeatureDataset(train_data_dict, num_classes, mode='test')
+        preprocessor_params = {
+            'feature_dir':feature_dir,
+            'label_dir':label_dir,
+            'video_list':train_video_list,
+            'event_list':event_list,
+            'sample_rate':all_params['sample_rate'],
+            'temporal_aug':all_params['temporal_aug'],
+            'boundary_smooth':all_params['boundary_smooth']
+        }
+        train_train_dataset = VideoFeatureDataset(preprocessor_params, num_classes, mode='train')
+        train_test_dataset = VideoFeatureDataset(preprocessor_params, num_classes, mode='test')
 
-    test_data_dict = get_data_dict(
-        feature_dir=feature_dir,
-        label_dir=label_dir,
-        video_list=test_video_list,
-        event_list=event_list,
-        sample_rate=sample_rate,
-        temporal_aug=temporal_aug,
-        boundary_smooth=boundary_smooth
-    )
+        preprocessor_params = {
+            'feature_dir':feature_dir,
+            'label_dir':label_dir,
+            'video_list':test_video_list,
+            'event_list':event_list,
+            'sample_rate':all_params['sample_rate'],
+            'temporal_aug':all_params['temporal_aug'],
+            'boundary_smooth':all_params['boundary_smooth']
+        }
 
-    test_test_dataset = VideoFeatureDataset(test_data_dict, num_classes, mode='test')
+    dataset_name = all_params['dataset_name']
 
-    trainer = Trainer(dict(encoder_params), dict(decoder_params), dict(diffusion_params),
-        event_list, sample_rate, temporal_aug, set_sampling_seed, postprocess,
+    test_test_dataset = VideoFeatureDataset(preprocessor_params, num_classes, mode='test')
+
+    trainer = Trainer(dict(all_params['encoder_params']), dict(all_params['decoder_params']), dict(all_params['diffusion_params']),
+        event_list, all_params['sample_rate'], all_params['temporal_aug'], 
+        all_params['set_sampling_seed'], all_params['postprocess'],
         device=device, args=args
     )
 
-    if not os.path.exists(result_dir):
-        os.makedirs(result_dir)
+    if not os.path.exists(all_params['result_dir']):
+        os.makedirs(all_params['result_dir'])
 
     if args.test:
         device = torch.device('cuda')
@@ -124,11 +131,12 @@ if __name__ == '__main__':
         result_path = os.path.join('result', args.result_dir, dataset_name, 'split'+str(args.split))
 
         # For test mode, always run both TAS and LTA inference
+        """
         print("TAS inference")
         test_result_dict = trainer.test(
             test_test_dataset, mode, device, label_dir,
             result_dir=result_path, model_path=model_path, args=args, all_params=all_params, obs_p=1.0)
-        
+        """
         print("LTA inference")
         obs_ps = [0.2, 0.3]
         for obs_p in obs_ps:
@@ -138,8 +146,9 @@ if __name__ == '__main__':
                 result_dir=result_path, model_path=model_path, all_params=all_params, obs_p=obs_p)
     else:
         trainer.train(train_train_dataset, train_test_dataset, test_test_dataset,
-            loss_weights, class_weighting, soft_label,
-            num_epochs, batch_size, learning_rate, weight_decay,
+            all_params['loss_weights'], all_params['class_weighting'], all_params['soft_label'],
+            all_params['num_epochs'], all_params['batch_size'], all_params['learning_rate'], all_params['weight_decay'],
             label_dir=label_dir, result_dir=os.path.join('result', naming, dataset_name,'split'+str(split)),
-            log_freq=log_freq, log_train_results=log_train_results, args=args, all_params=all_params
+            log_freq=all_params['log_freq'], 
+            log_train_results=all_params['log_train_results'], args=args, all_params=all_params
         )
