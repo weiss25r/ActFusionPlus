@@ -83,20 +83,7 @@ if __name__ == '__main__':
     train_video_list = [i.split('.')[0] for i in train_video_list]
     test_video_list = [i.split('.')[0] for i in test_video_list]
 
-    if not args.test:
-        preprocessor_params = {
-            'feature_dir':feature_dir,
-            'label_dir':label_dir,
-            'video_list':train_video_list,
-            'event_list':event_list,
-            'sample_rate':all_params['sample_rate'],
-            'temporal_aug':all_params['temporal_aug'],
-            'boundary_smooth':all_params['boundary_smooth']
-        }
-        train_train_dataset = VideoFeatureDataset(preprocessor_params, num_classes, mode='train')
-        train_test_dataset = VideoFeatureDataset(preprocessor_params, num_classes, mode='test')
-
-        preprocessor_params = {
+    test_preprocessor_params = {
             'feature_dir':feature_dir,
             'label_dir':label_dir,
             'video_list':test_video_list,
@@ -105,10 +92,23 @@ if __name__ == '__main__':
             'temporal_aug':all_params['temporal_aug'],
             'boundary_smooth':all_params['boundary_smooth']
         }
+    
+    if not args.test:
+        train_preprocessor_params = {
+            'feature_dir':feature_dir,
+            'label_dir':label_dir,
+            'video_list':train_video_list,
+            'event_list':event_list,
+            'sample_rate':all_params['sample_rate'],
+            'temporal_aug':all_params['temporal_aug'],
+            'boundary_smooth':all_params['boundary_smooth']
+        }
+        train_train_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='train')
+        train_test_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='test')
 
     dataset_name = all_params['dataset_name']
 
-    test_test_dataset = VideoFeatureDataset(preprocessor_params, num_classes, mode='test')
+    test_test_dataset = VideoFeatureDataset(test_preprocessor_params, num_classes, mode='test')
 
     trainer = Trainer(dict(all_params['encoder_params']), dict(all_params['decoder_params']), dict(all_params['diffusion_params']),
         event_list, all_params['sample_rate'], all_params['temporal_aug'], 

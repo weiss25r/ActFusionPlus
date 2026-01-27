@@ -58,7 +58,7 @@ class VideoProcessor():
         return data_dict
 
     def preprocess_video(self, video):
-            feature = np.load(self.data_dict[video]['feature_path'], allow_pickle=True)
+            feature = np.load(self.data_dict[video]['feature_path'], allow_pickle=True, mmap_mode='r')
 
             if len(feature.shape) == 3:
                 feature = np.swapaxes(feature, 0, 1)
@@ -93,7 +93,7 @@ class VideoProcessor():
                 event_seq_ext = [self.data_dict[video]['event_seq_raw'][::self.sample_rate]]
                 boundary_seq_ext = [self.data_dict[video]['boundary_seq_raw'][::self.sample_rate]]
             return {
-                'feature': [torch.from_numpy(i).float() for i in feature],
+                'feature': [torch.from_numpy(i.copy()).float() for i in feature],
                 'event_seq_ext': [torch.from_numpy(i).float() for i in event_seq_ext],
                 'boundary_seq_ext': [torch.from_numpy(i).float() for i in boundary_seq_ext]
             }
@@ -174,10 +174,10 @@ class VideoFeatureDataset(Dataset):
             video=video
         )
         feature = preprocessed_video['feature']
-        label = preprocessed_video['event_seq_ext']
         boundary = preprocessed_video['boundary_seq_ext']
 
         if self.mode == 'train':
+            label = preprocessed_video['event_seq_ext']
             temporal_aug_num = len(feature)
             temporal_rid = random.randint(0, temporal_aug_num - 1) # a<=x<=b
             feature = feature[temporal_rid]
@@ -194,6 +194,8 @@ class VideoFeatureDataset(Dataset):
             boundary /= boundary.max()  # normalize again
 
         if self.mode == 'test':
+            label = self.data_dict[video]['event_seq_raw']
+            label = torch.from_numpy(label).float()
             feature = [torch.swapaxes(i, 1, 2) for i in feature]  # [10 x F x T]
             label = label.unsqueeze(0)   # 1 X T'
             boundary = [i.unsqueeze(0).unsqueeze(0) for i in boundary]   # [1 x 1 x T]
