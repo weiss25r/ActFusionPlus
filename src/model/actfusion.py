@@ -7,57 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter1d
 from .backbone import EncoderModel, DecoderModel
-
-def get_timestep_embedding(timesteps, embedding_dim): # for diffusion model
-    # timesteps: batch,
-    # out:       batch, embedding_dim
-    """
-    This matches the implementation in Denoising Diffusion Probabilistic Models:
-    From Fairseq.
-    Build sinusoidal embeddings.
-    This matches the implementation in tensor2tensor, but differs slightly
-    from the description in Section 3.5 of "Attention Is All You Need".
-    """
-    assert len(timesteps.shape) == 1
-
-    half_dim = embedding_dim // 2
-    emb = math.log(10000) / (half_dim - 1)
-    emb = torch.exp(torch.arange(half_dim, dtype=torch.float32) * -emb)
-    emb = emb.to(device=timesteps.device)
-    emb = timesteps.float()[:, None] * emb[None, :]
-    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
-    if embedding_dim % 2 == 1:  # zero pad
-        emb = torch.nn.functional.pad(emb, (0,1,0,0))
-    return emb
-
-def swish(x):
-    return x * torch.sigmoid(x)
-
-def extract(a, t, x_shape):
-    """extract the appropriate  t  index for a batch of indices"""
-    batch_size = t.shape[0]
-    out = a.gather(-1, t)
-    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
-
-def cosine_beta_schedule(timesteps, s=0.008):
-    """
-    cosine schedule
-    as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
-    """
-    steps = timesteps + 1
-    x = torch.linspace(0, timesteps, steps, dtype=torch.float64)
-    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, 0, 0.999)
-
-def normalize(x, scale): # [0,1] > [-scale, scale]
-    x = (x * 2 - 1.) * scale
-    return x
-
-def denormalize(x, scale): #  [-scale, scale] > [0,1]
-    x = ((x / scale) + 1) / 2
-    return x
+from .diffusion import GaussianDiffusion
+from .diffusion_utils import *
 
 class ActFusion(nn.Module):
     def __init__(self, encoder_params, decoder_params, diffusion_params, num_classes, device, args=None):
@@ -66,46 +17,8 @@ class ActFusion(nn.Module):
         self.device = device
         self.num_classes = num_classes
 
-        timesteps = diffusion_params['timesteps']
-        betas = cosine_beta_schedule(timesteps)  # torch.Size([1000])
-        alphas = 1. - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0)
-        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.)
-        timesteps, = betas.shape
-        self.num_timesteps = int(timesteps)
-
-        self.sampling_timesteps = diffusion_params['sampling_timesteps']
-        assert self.sampling_timesteps <= timesteps
-        self.ddim_sampling_eta = diffusion_params['ddim_sampling_eta']
+        self.gaussian_diffusion = GaussianDiffusion(diffusion_params, device)
         self.scale = diffusion_params['snr_scale']
-
-        self.register_buffer('betas', betas)
-        self.register_buffer('alphas_cumprod', alphas_cumprod)
-        self.register_buffer('alphas_cumprod_prev', alphas_cumprod_prev)
-
-        # calculations for diffusion q(x_t | x_{t-1}) and others
-
-        self.register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphas_cumprod))
-        self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1. - alphas_cumprod))
-        self.register_buffer('log_one_minus_alphas_cumprod', torch.log(1. - alphas_cumprod))
-        self.register_buffer('sqrt_recip_alphas_cumprod', torch.sqrt(1. / alphas_cumprod))
-        self.register_buffer('sqrt_recipm1_alphas_cumprod', torch.sqrt(1. / alphas_cumprod - 1))
-
-        # calculations for posterior q(x_{t-1} | x_t, x_0)
-
-        posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
-
-        # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
-
-        self.register_buffer('posterior_variance', posterior_variance)
-
-        # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
-
-        self.register_buffer('posterior_log_variance_clipped', torch.log(posterior_variance.clamp(min=1e-20)))
-        self.register_buffer('posterior_mean_coef1', betas * torch.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod))
-        self.register_buffer('posterior_mean_coef2',
-                             (1. - alphas_cumprod_prev) * torch.sqrt(alphas) / (1. - alphas_cumprod))
-
         ################################################################
 
         self.detach_decoder = diffusion_params['detach_decoder']
@@ -136,23 +49,7 @@ class ActFusion(nn.Module):
 
         self.args = args
 
-    def predict_noise_from_start(self, x_t, t, x0):
-        return (
-            (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) /
-            extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
-        )
-
-    def q_sample(self, x_start, t, noise=None): # forward diffusion
-        if noise is None:
-            noise = torch.randn_like(x_start)
-
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, x_start.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
-
-        return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
-
     def model_predictions(self, backbone_feats, x, t):
-
         x_m = torch.clamp(x, min=-1 * self.scale, max=self.scale) # [-scale, +scale]
         x_m = denormalize(x_m, self.scale)                        # [0, 1]
 
@@ -164,30 +61,9 @@ class ActFusion(nn.Module):
         x_start = normalize(x_start, self.scale)                              # [-scale, +scale]
         x_start = torch.clamp(x_start, min=-1 * self.scale, max=self.scale)
 
-        pred_noise = self.predict_noise_from_start(x, t, x_start)
+        pred_noise = self.gaussian_diffusion.predict_noise_from_start(x, t, x_start)
 
         return pred_noise, x_start
-
-
-    def prepare_targets(self, event_gt, args=None):
-
-        # event_gt: normalized [0, 1]
-
-        assert(event_gt.max() <= 1 and event_gt.min() >= 0)
-
-        t = torch.randint(0, self.num_timesteps, (1,), device=self.device).long()
-
-        noise = torch.randn(size=event_gt.shape, device=self.device)
-
-        x_start = (event_gt * 2. - 1.) * self.scale  #[-scale, +scale]
-
-        # noise sample
-        x = self.q_sample(x_start=x_start, t=t, noise=noise)
-
-        x = torch.clamp(x, min=-1 * self.scale, max=self.scale)
-        event_diffused = ((x / self.scale) + 1) / 2.           # normalized [0, 1]
-
-        return event_diffused, noise, t
 
     def mask(self, x, event_gt=None, boundary_gt=None, cond_type='full', args=None):
 
@@ -290,7 +166,7 @@ class ActFusion(nn.Module):
         encoder_ce_loss = encoder_ce_loss.mean()
 
         # prepare the targets for the decoder
-        event_diffused, noise, t = self.prepare_targets(event_gt)
+        event_diffused, noise, t = self.gaussian_diffusion.prepare_targets(event_gt)
 
         # decode the targets via the decoder
         event_out = self.decoder(backbone_feats, t, event_diffused.float())
@@ -337,7 +213,6 @@ class ActFusion(nn.Module):
 
         return loss_dict
 
-
     @torch.no_grad()
     def ddim_sample(self, video_feats, seed=None, full_len=None, args=None):
 
@@ -377,7 +252,7 @@ class ActFusion(nn.Module):
             input_feats = new_feats
         else:
             shape = (video_feats.shape[0], self.num_classes, video_feats.shape[2])
-        total_timesteps, sampling_timesteps, eta = self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta
+        total_timesteps, sampling_timesteps, eta, alphas_cumprod = self.gaussian_diffusion.get_sampling_params()
 
         # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)
@@ -405,8 +280,8 @@ class ActFusion(nn.Module):
                 x_time = x_start
                 continue
 
-            alpha = self.alphas_cumprod[time]
-            alpha_next = self.alphas_cumprod[time_next]
+            alpha = alphas_cumprod[time]
+            alpha_next = alphas_cumprod[time_next]
 
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma ** 2).sqrt()
