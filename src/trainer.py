@@ -47,7 +47,7 @@ class Trainer:
         device = self.device
         self.model.to(device)
 
-        print("NUMERO EPOCHE: ", self.model_params['num_epochs'])
+        print("NUMBER OF EPOCHS: ", self.model_params['num_epochs'])
 
         optimizer = optim.Adam(self.model.parameters(), lr=self.model_params['learning_rate'],
                                 weight_decay=self.model_params['weight_decay'])
