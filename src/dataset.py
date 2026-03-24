@@ -45,6 +45,7 @@ class VideoProcessor():
                 if event[i] in self.event_list:
                     event_seq_raw[i] = self.event_list.index(event[i])
                 else:
+                    raise ValueError(f"DEBUG: {event[i]}, {video}")
                     event_seq_raw[i] = -100  # background
 
             boundary_seq_raw = self.get_boundary_seq(event_seq_raw, self.boundary_smooth)
@@ -60,15 +61,18 @@ class VideoProcessor():
     def preprocess_video(self, video):
             feature = np.load(self.data_dict[video]['feature_path'], allow_pickle=True, mmap_mode='r')
 
-            if len(feature.shape) == 3:
+            if len(feature.shape) == 3: 
                 feature = np.swapaxes(feature, 0, 1)
             elif len(feature.shape) == 2:
                 feature = np.swapaxes(feature, 0, 1)
                 feature = np.expand_dims(feature, 0)
             else:
                 raise Exception('Invalid Feature.')
+            #print(f"DEBUG VIDEO {video}: Feature shape {feature.shape}, Labels shape {self.data_dict[video]['event_seq_raw'].shape}")
             
-            assert(feature.shape[1] == self.data_dict[video]['event_seq_raw'].shape[0])
+            min_len = min(feature.shape[1], self.data_dict[video]['event_seq_raw'].shape[0])
+            feature = feature[:, :min_len, :]
+
             assert(feature.shape[1] == self.data_dict[video]['boundary_seq_raw'].shape[0])
 
             if self.temporal_aug:

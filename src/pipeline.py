@@ -24,13 +24,13 @@ class ActFusionPipeline:
 
         if wandb_project_name == None:
             if model_params['dataset_name'] == '50salads':
-                wandb.init(project='50s_diffusion_integrate_++')
+                wandb.init(project='50s_diffusion_integrate_++', reinit=True)
             elif model_params['dataset_name'] == 'gtea':
-                wandb.init(project='gtea_diffusion_integrate_++')
+                wandb.init(project='gtea_diffusion_integrate_++', reinit=True)
             else:
-                wandb.init(project='bf_diffusion_integrate_++')
+                wandb.init(project='bf_diffusion_integrate_++', reinit=True)
         else:
-            wandb.init(project=wandb_project_name)
+            wandb.init(project=wandb_project_name, reinit=True)
 
         wandb.run.name = user_args.result_dir
         wandb.config.update(vars(user_args), allow_val_change=True)
@@ -54,13 +54,20 @@ class ActFusionPipeline:
         split = user_args.split
         print("split: ",split)
 
-        train_video_list = np.loadtxt(os.path.join(
-            model_params['root_data_dir'], model_params['dataset_name'], 'splits', f'train.split{split}.bundle'), dtype=str)
-        test_video_list = np.loadtxt(os.path.join(
-            model_params['root_data_dir'], model_params['dataset_name'], 'splits', f'test.split{split}.bundle'), dtype=str)
+        if dirs == None:
+            train_video_list = np.loadtxt(os.path.join(
+                model_params['root_data_dir'], model_params['dataset_name'], 'splits', f'train.split{split}.bundle'), dtype=str)
+            test_video_list = np.loadtxt(os.path.join(
+                model_params['root_data_dir'], model_params['dataset_name'], 'splits', f'test.split{split}.bundle'), dtype=str)
+        else:
+            train_video_list = np.loadtxt(dirs['train_split'], dtype=str)
+            test_video_list = np.loadtxt(dirs['test_split'], dtype=str)
+            val_video_list = np.loadtxt(dirs['val_split'], dtype=str)
 
         train_video_list = [i.split('.')[0] for i in train_video_list]
+        val_video_list = [i.split('.')[0] for i in val_video_list]
         test_video_list = [i.split('.')[0] for i in test_video_list]
+
 
         test_preprocessor_params = {
                 'feature_dir':feature_dir,
@@ -82,25 +89,39 @@ class ActFusionPipeline:
                 'temporal_aug':model_params['temporal_aug'],
                 'boundary_smooth':model_params['boundary_smooth']
             }
-            train_train_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='train')
-            train_test_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='test')
+
+            val_preprocessor_params = {
+                'feature_dir':feature_dir,
+                'label_dir':label_dir,
+                'video_list':val_video_list,
+                'event_list':event_list,
+                'sample_rate':model_params['sample_rate'],
+                'temporal_aug':model_params['temporal_aug'],
+                'boundary_smooth':model_params['boundary_smooth']
+            }
+            
+
+            train_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='train')
+            val_dataset = VideoFeatureDataset(val_preprocessor_params, num_classes, mode='test')
 
         dataset_name = model_params['dataset_name']
 
-        test_test_dataset = VideoFeatureDataset(test_preprocessor_params, num_classes, mode='test')
+        test_dataset = VideoFeatureDataset(test_preprocessor_params, num_classes, mode='test')
 
-        trainer = Trainer(model_params, device, event_list, user_args)
+        trainer = Trainer(model_params, device, event_list, user_args, mapping_file)
 
         if not os.path.exists(model_params['result_dir']):
             os.makedirs(model_params['result_dir'])
 
         if user_args.test:
-            trainer.run_inference(test_test_dataset, device, label_dir)
+            trainer.run_inference(test_dataset, device, label_dir)
             
         else:
-            trainer.train(train_train_dataset, train_test_dataset, test_test_dataset,
+            trainer.train(train_dataset, val_dataset,
                 label_dir=label_dir, result_dir=os.path.join('result', naming, dataset_name,'split'+str(split))
             )
+
+        wandb.finish()
 
 class ActFusionConfig:
     def __init__(self, config_file: str):

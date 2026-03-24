@@ -4,9 +4,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
-
-def swish(x):
-    return x * torch.sigmoid(x)
+from .diffusion_utils import swish
 
 class MixedConvAttModule(nn.Module): # for encoder
     def __init__(self, num_layers, num_f_maps, kernel_size, dropout_rate, time_emb_dim=None, pos='none', attn='dilated'):

@@ -4,8 +4,6 @@ import torch.nn.functional as F
 import math 
 from .diffusion_utils import cosine_beta_schedule, extract
 
-
-
 class GaussianDiffusion(nn.Module):
     def __init__(self, diffusion_params, device):
         super(GaussianDiffusion, self).__init__()

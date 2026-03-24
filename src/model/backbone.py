@@ -3,36 +3,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .attn import MixedConvAttModuleV2, MixedConvAttModule
+from .diffusion_utils import swish, get_timestep_embedding
 
 ########################################################################################
 # Encoder and Decoder are adapted from ASFormer.
 # Compared to ASFormer, the main difference is that this version applies attention in a similar manner as dilated temporal convolutions.
 # This difference does not change performance evidently in preliminary experiments.
-
-def get_timestep_embedding(timesteps, embedding_dim): # for diffusion model
-    # timesteps: batch,
-    # out:       batch, embedding_dim
-    """
-    This matches the implementation in Denoising Diffusion Probabilistic Models:
-    From Fairseq.
-    Build sinusoidal embeddings.
-    This matches the implementation in tensor2tensor, but differs slightly
-    from the description in Section 3.5 of "Attention Is All You Need".
-    """
-    assert len(timesteps.shape) == 1
-
-    half_dim = embedding_dim // 2
-    emb = math.log(10000) / (half_dim - 1)
-    emb = torch.exp(torch.arange(half_dim, dtype=torch.float32) * -emb)
-    emb = emb.to(device=timesteps.device)
-    emb = timesteps.float()[:, None] * emb[None, :]
-    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
-    if embedding_dim % 2 == 1:  # zero pad
-        emb = torch.nn.functional.pad(emb, (0,1,0,0))
-    return emb
-
-def swish(x):
-    return x * torch.sigmoid(x)
 
 class EncoderModel(nn.Module):
     def __init__(self, num_layers, num_f_maps, input_dim, num_classes, kernel_size,

@@ -16,7 +16,7 @@ from .vis import segment_bars
 
 class Trainer:
 
-    def __init__(self, model_params, device, event_list, user_args):
+    def __init__(self, model_params, device, event_list, user_args, mapping_file):
         self.device = device
         self.num_classes = len(event_list)
         self.event_list = event_list
@@ -27,6 +27,8 @@ class Trainer:
         self.user_args = user_args
 
         self.model_params = model_params
+
+        self.mapping_file = mapping_file
 
         self.model = ActFusion(dict(self.model_params['encoder_params']), 
                                dict(self.model_params['decoder_params']), 
@@ -43,13 +45,14 @@ class Trainer:
         self.best_lta_metrics = None
         self.best_combined_metrics = None
 
-    def train(self, train_train_dataset, train_test_dataset, test_test_dataset, label_dir, result_dir):
+    def train(self, train_dataset, validation_dataset, label_dir, result_dir):
         device = self.device
         self.model.to(device)
 
         print("NUMBER OF EPOCHS: ", self.model_params['num_epochs'])
 
-        optimizer = optim.Adam(self.model.parameters(), lr=self.model_params['learning_rate'],
+        #TODO: da documentare
+        optimizer = optim.AdamW(self.model.parameters(), lr=self.model_params['learning_rate'],
                                 weight_decay=self.model_params['weight_decay'])
         optimizer.zero_grad()
 
@@ -66,7 +69,7 @@ class Trainer:
                     step = saved_state['step']  
 
         if self.model_params['class_weighting']:
-            class_weights = train_train_dataset.get_class_weights()
+            class_weights = train_dataset.get_class_weights()
             class_weights = torch.from_numpy(class_weights).float().to(device)
             ce_criterion = nn.CrossEntropyLoss(ignore_index=-100, weight=class_weights, reduction='none')
         else:
@@ -76,7 +79,7 @@ class Trainer:
         mse_criterion = nn.MSELoss(reduction='none')
 
         train_train_loader = torch.utils.data.DataLoader(
-            train_train_dataset, batch_size=1, shuffle=True, num_workers=4)
+            train_dataset, batch_size=1, shuffle=True, num_workers=4)
 
         if result_dir:
             if not os.path.exists(result_dir):
@@ -134,7 +137,7 @@ class Trainer:
 
                 step += 1
 
-            epoch_running_loss /= len(train_train_dataset)
+            epoch_running_loss /= len(train_dataset)
             wandb.log({"loss":epoch_running_loss})
 
             print(f'Epoch {epoch} - Running Loss {epoch_running_loss}')
@@ -149,14 +152,14 @@ class Trainer:
                 }
 
             if epoch % self.model_params['log_freq'] == 0:
-                self.evaluate_and_log(logger, result_dir, state, epoch, device, label_dir, train_test_dataset, test_test_dataset)
+                self.evaluate_and_log(logger, result_dir, state, epoch, device, label_dir, validation_dataset)
 
         if result_dir:
             logger.close()
         
         self._print_summary(result_dir)
 
-    def evaluate_and_log(self, logger, result_dir, state, epoch, device, label_dir, train_test_dataset, test_test_dataset,):
+    def evaluate_and_log(self, logger, result_dir, state, epoch, device, label_dir, validation_dataset,):
         w_path = os.path.join(result_dir, 'log.txt')
         w = open(w_path, 'a')
         w_ = 'epoch'+str(epoch)+'\n'
@@ -169,59 +172,44 @@ class Trainer:
         for mode in ['decoder-agg']: # Default: decoder-agg. The results of decoder-noagg are similar
             # Segmentation (TAS) inference
             # TAS inference
-            test_result_dict = self.test(
-                test_test_dataset, mode, device, label_dir,
+            val_result_dict = self.test(
+                validation_dataset, mode, device, label_dir,
                 result_dir=result_dir, model_path=None, obs_p=1.0)
-            w_ = self._log_tas_results(test_result_dict, w_)
+            w_ = self._log_tas_results(val_result_dict, w_)
 
             # LTA inference - obs_p 0.2
-            test_result_dict20 = self.test(
-                test_test_dataset, mode, device, label_dir,
+            val_result_dict20 = self.test(
+                validation_dataset, mode, device, label_dir,
                 result_dir=result_dir, model_path=None, obs_p=0.2)
-            w_ = self._log_lta_results(test_result_dict20, w_, obs_p=0.2)
+            w_ = self._log_lta_results(val_result_dict20, w_, obs_p=0.2)
 
             # LTA inference - obs_p 0.3
-            test_result_dict30 = self.test(
-                test_test_dataset, mode, device, label_dir,
+            val_result_dict30 = self.test(
+                validation_dataset, mode, device, label_dir,
                 result_dir=result_dir, model_path=None, obs_p=0.3)
-            w_ = self._log_lta_results(test_result_dict30, w_, obs_p=0.3)
+            w_ = self._log_lta_results(val_result_dict30, w_, obs_p=0.3)
 
             # === Best model saving ===
-            tas_f1s = [test_result_dict["F1@10"], test_result_dict["F1@25"], test_result_dict["F1@50"]]
-            tas_score = (test_result_dict["Acc"] + test_result_dict["Edit"] + sum(tas_f1s)) / (2 + len(tas_f1s))
+            tas_f1s = [val_result_dict["F1@10"], val_result_dict["F1@25"], val_result_dict["F1@50"]]
+            tas_score = (val_result_dict["Acc"] + val_result_dict["Edit"] + sum(tas_f1s)) / (2 + len(tas_f1s))
             lta_keys_02 = ["obs0.2_pred0.1", "obs0.2_pred0.2", "obs0.2_pred0.3", "obs0.2_pred0.5"]
             lta_keys_03 = ["obs0.3_pred0.1", "obs0.3_pred0.2", "obs0.3_pred0.3", "obs0.3_pred0.5"]
-            lta_f1s_02 = [test_result_dict20.get(k, 0.0) for k in lta_keys_02]
-            lta_f1s_03 = [test_result_dict30.get(k, 0.0) for k in lta_keys_03]
+            lta_f1s_02 = [val_result_dict20.get(k, 0.0) for k in lta_keys_02]
+            lta_f1s_03 = [val_result_dict30.get(k, 0.0) for k in lta_keys_03]
             lta_score = (sum(lta_f1s_02) + sum(lta_f1s_03)) / (len(lta_f1s_02) + len(lta_f1s_03))
-            self._save_best_models(tas_score, lta_score, result_dir, tas_metrics=test_result_dict, lta_metrics={'obs0.2': test_result_dict20, 'obs0.3': test_result_dict30})
+            self._save_best_models(tas_score, lta_score, result_dir, tas_metrics=val_result_dict, lta_metrics={'obs0.2': val_result_dict20, 'obs0.3': val_result_dict30})
             # =====================
 
             w.write(w_)
             w.close()
 
             if result_dir:
-                for k,v in test_result_dict.items():
-                    logger.add_scalar(f'Test-{mode}-{k}', v, epoch)
+                for k,v in val_result_dict.items():
+                    logger.add_scalar(f'Val-{mode}-{k}', v, epoch)
 
                 np.save(os.path.join(result_dir,
-                    f'test_results_{mode}_epoch{epoch}.npy'), test_result_dict)
+                    f'val_results_{mode}_epoch{epoch}.npy'), val_result_dict)
 
-
-            if self.model_params['log_train_results']:
-                train_result_dict = self.test(
-                    train_test_dataset, mode, device, label_dir,
-                    result_dir, model_path=None)
-
-                if result_dir:
-                    for k,v in train_result_dict.items():
-                        logger.add_scalar(f'Train-{mode}-{k}', v, epoch)
-
-                    np.save(os.path.join(result_dir,
-                        f'train_results_{mode}_epoch{epoch}.npy'), train_result_dict)
-
-                for k,v in train_result_dict.items():
-                    print(f'Epoch {epoch} - {mode}-Train-{k} {v}')
 
     def test_single_video(self, video_idx, test_dataset, mode, device, model_path=None, obs_p=0.2):
         assert(test_dataset.mode == 'test')
@@ -338,8 +326,7 @@ class Trainer:
         if model_path:
             self.model.load_state_dict(torch.load(model_path))
 
-        mapping_file = os.path.join('/datasets/GTEA/data', self.model_params['dataset_name'], 'mapping.txt')
-        actions_dict = read_mapping_dict(mapping_file)
+        actions_dict = read_mapping_dict(self.mapping_file)
         actions_dict_inv = {v: k for k, v in actions_dict.items()}
 
         # Check if this is anticipation mode (obs_p < 1.0)
@@ -375,10 +362,10 @@ class Trainer:
                     os.makedirs(vis_path)
 
                 # Visualization code
-                    gt_unique, gt_unique_len = get_unique_list_gt(label, actions_dict_inv)
-                    pred_unique, pred_unique_len = get_unique_list(pred)
-                    segment_bars(os.path.join(vis_path, f'{video}.png'), label, pred_ant, gt_unique=gt_unique, gt_unique_len=gt_unique_len,
-                                  pred_unique=pred_unique, pred_unique_len=pred_unique_len)
+                gt_unique, gt_unique_len = get_unique_list_gt(label, actions_dict_inv)
+                pred_unique, pred_unique_len = get_unique_list(pred)
+                segment_bars(os.path.join(vis_path, f'{video}.png'), label, pred_ant, gt_unique=gt_unique, gt_unique_len=gt_unique_len,
+                                pred_unique=pred_unique, pred_unique_len=pred_unique_len)
 
                 if is_anticipation:
                     total_len = len(label)
@@ -498,9 +485,10 @@ class Trainer:
             self.best_tas_acc = tas_acc
             self.best_tas_metrics = tas_metrics
             torch.save(self.model.state_dict(), f'{result_dir}/best_tas_model.pth')
-            print(f'New best TAS model saved! Score: {tas_acc:.2f}')
+            print("TAS_ACC: ", tas_acc)
+            print(f'New best TAS model saved! Score: {tas_acc:.7f}')
             if tas_metrics:
-                print(f'  TAS Metrics - Acc: {tas_metrics["Acc"]:.2f}, Edit: {tas_metrics["Edit"]:.2f}, F1@10: {tas_metrics["F1@10"]:.2f}, F1@25: {tas_metrics["F1@25"]:.2f}, F1@50: {tas_metrics["F1@50"]:.2f}')
+                print(f'  TAS Metrics - Acc: {tas_metrics["Acc"]:.7f}, Edit: {tas_metrics["Edit"]:.2f}, F1@10: {tas_metrics["F1@10"]:.2f}, F1@25: {tas_metrics["F1@25"]:.2f}, F1@50: {tas_metrics["F1@50"]:.2f}')
         
         # Check and save best LTA model
         if lta_moc > self.best_lta_moc:

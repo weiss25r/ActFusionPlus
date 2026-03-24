@@ -120,6 +120,7 @@ class ActFusion(nn.Module):
 
         mask_tokens = self.mask_token.repeat(x.shape[0], 1, sorted_idx.shape[2]-x.shape[2]).to(self.device)
         restored_idx = torch.argsort(sorted_idx, dim=2)
+        
         x_ = torch.cat([x, mask_tokens], dim=2)
         x = torch.gather(x_, dim=2, index=restored_idx.repeat(1, x.shape[1], 1))
         return (x, feature_mask)
