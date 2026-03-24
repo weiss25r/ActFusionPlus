@@ -31,5 +31,10 @@ if __name__ == '__main__':
 
     user_args = parser.parse_args()
 
-    pipeline = ActFusionPipeline(visible_devices="3")
-    pipeline.run(user_args=user_args)
+    print(user_args)
+
+    pipeline = ActFusionPipeline(visible_devices="1")
+    pipeline.run(
+        user_args=user_args
+    )
+    

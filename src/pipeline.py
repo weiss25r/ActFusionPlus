@@ -5,41 +5,44 @@ from src.dataset import VideoFeatureDataset
 from src.utils import read_mapping_dict
 
 class ActFusionPipeline:
-    def __init__(self, visible_devices):
-        os.environ['CUDA_VISIBLE_DEVICES'] = visible_devices
+    def __init__(self, visible_devices=None):
+        if visible_devices != None:
+            os.environ['CUDA_VISIBLE_DEVICES'] = visible_devices
+            print(visible_devices)
 
-    def run(self, user_args, dirs, wandb_project_name=None):
+    def run(self, user_args):
         config = ActFusionConfig(config_file=user_args.config)
-        model_params = config.params
+        run_params = config.params
+
+        dirs = run_params['dataset_paths']
+        wandb_project_name = run_params['wandb_project_name']
 
         # Add pos, n_mask, and patch_size from config to args
-        user_args.pos = model_params.get('pos', 'none')
-        user_args.n_mask = model_params.get('n_mask', 10)
-        user_args.patch_size = model_params.get('patch_size', 10)
+        user_args.pos = run_params.get('pos', 'none')
+        user_args.n_mask = run_params.get('n_mask', 10)
+        user_args.patch_size = run_params.get('patch_size', 10)
 
         naming = user_args.result_dir
         device = torch.device('cuda')
 
-        print(device)
-
         if wandb_project_name == None:
-            if model_params['dataset_name'] == '50salads':
-                wandb.init(project='50s_diffusion_integrate_++', reinit=True)
-            elif model_params['dataset_name'] == 'gtea':
-                wandb.init(project='gtea_diffusion_integrate_++', reinit=True)
+            if run_params['dataset_name'] == '50salads':
+                wandb.init(project='50s_diffusion_integrate_++', resume="allow")
+            elif run_params['dataset_name'] == 'gtea':
+                wandb.init(project='gtea_diffusion_integrate_++', resume="allow")
             else:
-                wandb.init(project='bf_diffusion_integrate_++', reinit=True)
+                wandb.init(project='bf_diffusion_integrate_++', resume="allow")
         else:
-            wandb.init(project=wandb_project_name, reinit=True)
+            wandb.init(project=wandb_project_name)
 
         wandb.run.name = user_args.result_dir
         wandb.config.update(vars(user_args), allow_val_change=True)
-        wandb.config.update(model_params, allow_val_change=True)
+        wandb.config.update(run_params, allow_val_change=True)
 
         if dirs == None:
-            feature_dir = os.path.join(model_params['root_data_dir'], model_params['dataset_name'], 'features')
-            label_dir = os.path.join(model_params['root_data_dir'], model_params['dataset_name'], 'groundTruth')
-            mapping_file = os.path.join(model_params['root_data_dir'], model_params['dataset_name'], 'mapping.txt')
+            feature_dir = os.path.join(run_params['root_data_dir'], run_params['dataset_name'], 'features')
+            label_dir = os.path.join(run_params['root_data_dir'], run_params['dataset_name'], 'groundTruth')
+            mapping_file = os.path.join(run_params['root_data_dir'], run_params['dataset_name'], 'mapping.txt')
             print("mapping_file: ", mapping_file)
         else:
             feature_dir = dirs['feature_dir']
@@ -56,9 +59,9 @@ class ActFusionPipeline:
 
         if dirs == None:
             train_video_list = np.loadtxt(os.path.join(
-                model_params['root_data_dir'], model_params['dataset_name'], 'splits', f'train.split{split}.bundle'), dtype=str)
+                run_params['root_data_dir'], run_params['dataset_name'], 'splits', f'train.split{split}.bundle'), dtype=str)
             test_video_list = np.loadtxt(os.path.join(
-                model_params['root_data_dir'], model_params['dataset_name'], 'splits', f'test.split{split}.bundle'), dtype=str)
+                run_params['root_data_dir'], run_params['dataset_name'], 'splits', f'test.split{split}.bundle'), dtype=str)
         else:
             train_video_list = np.loadtxt(dirs['train_split'], dtype=str)
             test_video_list = np.loadtxt(dirs['test_split'], dtype=str)
@@ -74,9 +77,9 @@ class ActFusionPipeline:
                 'label_dir':label_dir,
                 'video_list':test_video_list,
                 'event_list':event_list,
-                'sample_rate':model_params['sample_rate'],
-                'temporal_aug':model_params['temporal_aug'],
-                'boundary_smooth':model_params['boundary_smooth']
+                'sample_rate':run_params['sample_rate'],
+                'temporal_aug':run_params['temporal_aug'],
+                'boundary_smooth':run_params['boundary_smooth']
             }
 
         if not user_args.test:
@@ -85,9 +88,9 @@ class ActFusionPipeline:
                 'label_dir':label_dir,
                 'video_list':train_video_list,
                 'event_list':event_list,
-                'sample_rate':model_params['sample_rate'],
-                'temporal_aug':model_params['temporal_aug'],
-                'boundary_smooth':model_params['boundary_smooth']
+                'sample_rate':run_params['sample_rate'],
+                'temporal_aug':run_params['temporal_aug'],
+                'boundary_smooth':run_params['boundary_smooth']
             }
 
             val_preprocessor_params = {
@@ -95,23 +98,23 @@ class ActFusionPipeline:
                 'label_dir':label_dir,
                 'video_list':val_video_list,
                 'event_list':event_list,
-                'sample_rate':model_params['sample_rate'],
-                'temporal_aug':model_params['temporal_aug'],
-                'boundary_smooth':model_params['boundary_smooth']
+                'sample_rate':run_params['sample_rate'],
+                'temporal_aug':run_params['temporal_aug'],
+                'boundary_smooth':run_params['boundary_smooth']
             }
             
 
             train_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='train')
             val_dataset = VideoFeatureDataset(val_preprocessor_params, num_classes, mode='test')
 
-        dataset_name = model_params['dataset_name']
+        dataset_name = run_params['dataset_name']
 
         test_dataset = VideoFeatureDataset(test_preprocessor_params, num_classes, mode='test')
 
-        trainer = Trainer(model_params, device, event_list, user_args, mapping_file)
+        trainer = Trainer(run_params, device, event_list, user_args, mapping_file)
 
-        if not os.path.exists(model_params['result_dir']):
-            os.makedirs(model_params['result_dir'])
+        if not os.path.exists(run_params['result_dir']):
+            os.makedirs(run_params['result_dir'])
 
         if user_args.test:
             trainer.run_inference(test_dataset, device, label_dir)
