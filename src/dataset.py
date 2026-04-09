@@ -59,7 +59,7 @@ class VideoProcessor():
         return data_dict
 
     def preprocess_video(self, video):
-            feature = np.load(self.data_dict[video]['feature_path'], allow_pickle=True, mmap_mode='r')
+            feature = np.load(self.data_dict[video]['feature_path'], allow_pickle=True)#, mmap_mode='r')
 
             if len(feature.shape) == 3: 
                 feature = np.swapaxes(feature, 0, 1)
@@ -68,12 +68,15 @@ class VideoProcessor():
                 feature = np.expand_dims(feature, 0)
             else:
                 raise Exception('Invalid Feature.')
-            #print(f"DEBUG VIDEO {video}: Feature shape {feature.shape}, Labels shape {self.data_dict[video]['event_seq_raw'].shape}")
             
-            min_len = min(feature.shape[1], self.data_dict[video]['event_seq_raw'].shape[0])
+            min_len = min(feature.shape[1], self.data_dict[video]['event_seq_raw'].shape[0], self.data_dict[video]['boundary_seq_raw'].shape[0])
             feature = feature[:, :min_len, :]
-
-            assert(feature.shape[1] == self.data_dict[video]['boundary_seq_raw'].shape[0])
+            
+            #FIX FOR NUMBER OF FRAMES - ANNOTATIONS INCONSISTENCY
+            current_event_seq = self.data_dict[video]['event_seq_raw'][:min_len]
+            current_boundary_seq = self.data_dict[video]['boundary_seq_raw'][:min_len]
+            
+            assert(feature.shape[1] == current_boundary_seq.shape[0])
 
             if self.temporal_aug:
 
@@ -83,23 +86,25 @@ class VideoProcessor():
                 ]
 
                 event_seq_ext = [
-                    self.data_dict[video]['event_seq_raw'][offset::self.sample_rate]
+                    current_event_seq[offset::self.sample_rate]
                     for offset in range(self.sample_rate)
                 ]
 
                 boundary_seq_ext = [
-                    self.data_dict[video]['boundary_seq_raw'][offset::self.sample_rate]
+                    current_boundary_seq[offset::self.sample_rate]
                     for offset in range(self.sample_rate)
                 ]
 
             else:
                 feature = [feature[:,::self.sample_rate,:]]
-                event_seq_ext = [self.data_dict[video]['event_seq_raw'][::self.sample_rate]]
-                boundary_seq_ext = [self.data_dict[video]['boundary_seq_raw'][::self.sample_rate]]
+                event_seq_ext = [current_event_seq[::self.sample_rate]]
+                boundary_seq_ext = [current_boundary_seq[::self.sample_rate]]
+                
             return {
                 'feature': [torch.from_numpy(i.copy()).float() for i in feature],
                 'event_seq_ext': [torch.from_numpy(i).float() for i in event_seq_ext],
-                'boundary_seq_ext': [torch.from_numpy(i).float() for i in boundary_seq_ext]
+                'boundary_seq_ext': [torch.from_numpy(i).float() for i in boundary_seq_ext],
+                'event_seq_raw_truncated': current_event_seq 
             }
 
     def get_boundary_seq(self, event_seq, boundary_smooth=None):
@@ -192,18 +197,22 @@ class VideoFeatureDataset(Dataset):
             spatial_rid = random.randint(0, spatial_aug_num - 1) # a<=x<=b
             feature = feature[spatial_rid]
 
-            feature = feature.T   # F x T
+            if len(feature.shape) == 2:
+                feature = feature.transpose(0, 1)
+            elif len(feature.shape) == 3:
+                feature = feature.transpose(1, 2)
+            else:
+                raise ValueError(f"Invalid feature shape: {feature.shape}")
 
             boundary = boundary.unsqueeze(0)
             boundary /= boundary.max()  # normalize again
 
         if self.mode == 'test':
-            label = self.data_dict[video]['event_seq_raw']
+            label = preprocessed_video['event_seq_raw_truncated']
+            
             label = torch.from_numpy(label).float()
             feature = [torch.swapaxes(i, 1, 2) for i in feature]  # [10 x F x T]
             label = label.unsqueeze(0)   # 1 X T'
             boundary = [i.unsqueeze(0).unsqueeze(0) for i in boundary]   # [1 x 1 x T]
 
         return feature, label, boundary, video
-
-

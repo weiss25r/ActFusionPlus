@@ -151,7 +151,7 @@ class Trainer:
                     'step': step
                 }
 
-            if epoch % self.model_params['log_freq'] == 0:
+            if (epoch+1) % self.model_params['log_freq'] == 0:
                 self.evaluate_and_log(logger, result_dir, state, epoch, device, label_dir, validation_dataset)
 
         if result_dir:
@@ -283,13 +283,22 @@ class Trainer:
 
             output = np.argmax(output, 0)
 
+            #PADDING FOR SOLVING NUMBER OF FRAMES - ANNOTATIONS INCONSISTENCIES
+            truncated_len = label.shape[-1]
+            
+            original_full_len = int(test_dataset.data_dict[video]['event_seq_raw'].shape[0])
 
             output = restore_full_sequence(output,
-                full_len=label.shape[-1],
+                full_len=truncated_len, 
                 left_offset=left_offset,
                 right_offset=right_offset,
                 sample_rate=self.sample_rate
             )
+
+            if len(output) < original_full_len:
+                padding_size = original_full_len - len(output)
+                padding = np.full(padding_size, output[-1])
+                output = np.concatenate((output, padding))
 
             if self.postprocess['type'] == 'mode': # after restoring full sequence
                 output = mode_filter(output, self.postprocess['value'])
@@ -311,11 +320,12 @@ class Trainer:
                             output[starts[e]:mid] = trans[e-1]
                             output[mid:ends[e]] = trans[e+1]
 
-            label = label.squeeze(0).cpu().numpy()
+            label = test_dataset.data_dict[video]['event_seq_raw']
+            
             assert(output.shape == label.shape)
 
             return video, output, label
-
+    
     def test(self, test_dataset, mode, device, label_dir, result_dir=None, model_path=None, obs_p=0.2):
 
         assert(test_dataset.mode == 'test')
