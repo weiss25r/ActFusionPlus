@@ -56,6 +56,12 @@ class Trainer:
                                 weight_decay=self.model_params['weight_decay'])
         optimizer.zero_grad()
 
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=self.model_params['num_epochs'],
+            eta_min = self.model_params['lr_scheduler_eta_min']
+        )
+
         restore_epoch = -1
         step = 1
 
@@ -65,8 +71,18 @@ class Trainer:
                     saved_state = torch.load(os.path.join(result_dir, 'latest.pt'))
                     self.model.load_state_dict(saved_state['model'])
                     optimizer.load_state_dict(saved_state['optimizer'])
+                    
+                    if 'scheduler' in saved_state:
+                        scheduler.load_state_dict(saved_state['scheduler'])
+                        
                     restore_epoch = saved_state['epoch']
                     step = saved_state['step']  
+                    self.best_tas_acc = saved_state.get('best_tas_acc', 0.0)
+                    self.best_lta_moc = saved_state.get('best_lta_moc', 0.0)
+                    self.best_both_score = saved_state.get('best_both_score', 0.0)
+                    self.best_tas_metrics = saved_state.get('best_tas_metrics', None)
+                    self.best_lta_metrics = saved_state.get('best_lta_metrics', None)
+                    self.best_combined_metrics = saved_state.get('best_combined_metrics', None)
 
         if self.model_params['class_weighting']:
             class_weights = train_dataset.get_class_weights()
@@ -138,7 +154,14 @@ class Trainer:
                 step += 1
 
             epoch_running_loss /= len(train_dataset)
-            wandb.log({"loss":epoch_running_loss})
+            current_lr = scheduler.get_last_lr()[0]
+            
+            scheduler.step()
+
+            wandb.log({
+                "loss": epoch_running_loss,
+                "learning_rate": current_lr
+            })
 
             print(f'Epoch {epoch} - Running Loss {epoch_running_loss}')
 
@@ -147,8 +170,15 @@ class Trainer:
                 state = {
                     'model': self.model.state_dict(),
                     'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
                     'epoch': epoch,
-                    'step': step
+                    'step': step,
+                    'best_tas_acc': self.best_tas_acc,
+                    'best_lta_moc': self.best_lta_moc,
+                    'best_both_score': self.best_both_score,
+                    'best_tas_metrics': self.best_tas_metrics,
+                    'best_lta_metrics': self.best_lta_metrics,
+                    'best_combined_metrics': self.best_combined_metrics
                 }
 
             if (epoch+1) % self.model_params['log_freq'] == 0:
