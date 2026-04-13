@@ -112,6 +112,8 @@ class Trainer:
                 feature, label, boundary, video = data
                 feature, label, boundary = feature.to(device), label.to(device), boundary.to(device)
 
+                feature = F.normalize(feature, p=2, dim=1)
+
                 loss_dict = self.model.get_training_loss(feature,
                     event_gt=F.one_hot(label.long(), num_classes=self.num_classes).permute(0, 2, 1),
                     boundary_gt=boundary,
@@ -264,8 +266,11 @@ class Trainer:
             # label:     torch.Size([1, Original T])
             # output: [torch.Size([1, C, Sampled T])]
 
-            input_feats = feature
+            #L2 NORM
 
+            input_feats = feature
+            feature = [F.normalize(f, p=2, dim=1) for f in feature]
+            
             # Check if this is anticipation mode (obs_p < 1.0)
             is_anticipation = obs_p < 1.0
             if is_anticipation:
