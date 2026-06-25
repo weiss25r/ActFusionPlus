@@ -14,7 +14,10 @@ class ActFusionPipeline:
         config = ActFusionConfig(config_file=user_args.config)
         run_params = config.params
 
-        dirs = run_params['dataset_paths']
+        try:
+            dirs = run_params['dataset_paths']
+        except:
+            dirs = None
         wandb_project_name = run_params['wandb_project_name']
 
         # Add pos, n_mask, and patch_size from config to args
@@ -66,9 +69,10 @@ class ActFusionPipeline:
             train_video_list = np.loadtxt(dirs['train_split'], dtype=str)
             test_video_list = np.loadtxt(dirs['test_split'], dtype=str)
             val_video_list = np.loadtxt(dirs['val_split'], dtype=str)
+    
+            val_video_list = [i.split('.')[0] for i in val_video_list]
 
         train_video_list = [i.split('.')[0] for i in train_video_list]
-        val_video_list = [i.split('.')[0] for i in val_video_list]
         test_video_list = [i.split('.')[0] for i in test_video_list]
 
 
@@ -93,19 +97,20 @@ class ActFusionPipeline:
                 'boundary_smooth':run_params['boundary_smooth']
             }
 
-            val_preprocessor_params = {
-                'feature_dir':feature_dir,
-                'label_dir':label_dir,
-                'video_list':val_video_list,
-                'event_list':event_list,
-                'sample_rate':run_params['sample_rate'],
-                'temporal_aug':run_params['temporal_aug'],
-                'boundary_smooth':run_params['boundary_smooth']
-            }
-            
+            if dirs != None:
+                val_preprocessor_params = {
+                    'feature_dir':feature_dir,
+                    'label_dir':label_dir,
+                    'video_list':val_video_list,
+                    'event_list':event_list,
+                    'sample_rate':run_params['sample_rate'],
+                    'temporal_aug':run_params['temporal_aug'],
+                    'boundary_smooth':run_params['boundary_smooth']
+                }
+                
+                val_dataset = VideoFeatureDataset(val_preprocessor_params, num_classes, mode='test')
 
             train_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='train')
-            val_dataset = VideoFeatureDataset(val_preprocessor_params, num_classes, mode='test')
 
         dataset_name = run_params['dataset_name']
 
@@ -121,8 +126,9 @@ class ActFusionPipeline:
             
         else:
             trainer.train(train_dataset, val_dataset,
-                label_dir=label_dir, result_dir=os.path.join('result', naming, dataset_name,'split'+str(split))
+                label_dir=label_dir, result_dir=os.path.join('result', naming, dataset_name,'split'+str(split)),
             )
+            
 
         wandb.finish()
 
@@ -136,8 +142,8 @@ class ActFusionConfig:
         if 'result_dir' not in all_params:
             all_params['result_dir'] = 'result'
 
-        if 'log_train_results' not in all_params:
-            all_params['log_train_results'] = True
+        if 'log_val_results' not in all_params:
+            all_params['log_val_results'] = True
 
         if 'soft_label' not in all_params:
             all_params['soft_label'] = None

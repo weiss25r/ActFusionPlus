@@ -25,7 +25,6 @@ class Trainer:
         self.set_sampling_seed = model_params['set_sampling_seed']
         self.postprocess = model_params['postprocess']
         self.user_args = user_args
-
         self.model_params = model_params
 
         self.mapping_file = mapping_file
@@ -157,12 +156,12 @@ class Trainer:
 
             epoch_running_loss /= len(train_dataset)
             current_lr = scheduler.get_last_lr()[0]
-            
+            wandb.log({"learning_rate": current_lr})
+        
             scheduler.step()
 
             wandb.log({
                 "loss": epoch_running_loss,
-                "learning_rate": current_lr
             })
 
             print(f'Epoch {epoch} - Running Loss {epoch_running_loss}')
@@ -172,7 +171,6 @@ class Trainer:
                 state = {
                     'model': self.model.state_dict(),
                     'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict(),
                     'epoch': epoch,
                     'step': step,
                     'best_tas_acc': self.best_tas_acc,
@@ -182,6 +180,8 @@ class Trainer:
                     'best_lta_metrics': self.best_lta_metrics,
                     'best_combined_metrics': self.best_combined_metrics
                 }
+
+                state['scheduler'] = scheduler
 
             if (epoch+1) % self.model_params['log_freq'] == 0:
                 self.evaluate_and_log(logger, result_dir, state, epoch, device, label_dir, validation_dataset)
@@ -241,7 +241,6 @@ class Trainer:
 
                 np.save(os.path.join(result_dir,
                     f'val_results_{mode}_epoch{epoch}.npy'), val_result_dict)
-
 
     def test_single_video(self, video_idx, test_dataset, mode, device, model_path=None, obs_p=0.2):
         assert(test_dataset.mode == 'test')

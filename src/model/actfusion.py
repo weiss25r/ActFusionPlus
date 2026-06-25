@@ -113,6 +113,79 @@ class ActFusion(nn.Module):
             for idx in start_idx:
                 feature_mask[:, :, idx*patch_size:idx*patch_size + patch_size] = 0
 
+        elif cond_type in ['center_gauss05', 'center_gauss03', 'inv_center_gauss05', 'inv_center_gauss03']:
+            threshold = 0.5 if '05' in cond_type else 0.3
+            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]), device=self.device)
+            event_gt_labels = torch.argmax(event_gt, dim=1)
+            
+            for b in range(x.shape[0]):
+                labels_b = event_gt_labels[b].cpu().numpy()
+                T = len(labels_b)
+                
+                changes = np.where(labels_b[:-1] != labels_b[1:])[0] + 1
+                starts = np.insert(changes, 0, 0)
+                ends = np.append(changes, T)
+                
+                center_gt = np.zeros(T)
+                
+                for s, e in zip(starts, ends):
+                    length = e - s
+                    if length >= 15: 
+                        center = s + (length / 2.0)
+                        
+                        sigma = max(length / 6.0, 1.0) 
+                        
+                        x_axis = np.arange(s, e)
+                        gauss = np.exp(-0.5 * ((x_axis - center) / sigma) ** 2)
+                        
+                        center_gt[s:e] = gauss
+                
+                center_gt_tensor = torch.from_numpy(center_gt).to(self.device).float()
+                
+                if cond_type.startswith('center_gauss'):
+                    mask_b = (center_gt_tensor < threshold).float()
+                else:
+                    mask_b = (center_gt_tensor >= threshold).float()
+                    
+                feature_mask[b, 0, :] = mask_b
+
+        elif cond_type == "center_og":
+            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
+
+            event_gt_labels = torch.argmax(event_gt, dim=1)
+            
+            mask_ratio = 0.33
+            min_len = 15
+
+            for b in range(x.shape[0]):
+                labels_b = event_gt_labels[b].cpu().numpy()
+
+                t = len(labels_b)
+
+                changes = np.where(labels_b[:-1] != labels_b[1:])[0] + 1
+                starts = np.insert(changes, 0, 0)
+                ends = np.append(changes, t)
+
+
+                for s, e in zip(starts, ends):
+                    length = e - s
+
+                    if length >= min_len:
+                        mask_width = int(length*mask_ratio)
+
+                        if mask_width == 0:
+                            continue
+
+                        center = s + (length // 2)
+
+                        m_start = center - (mask_width // 2)
+                        m_end = m_start + mask_width
+
+                        m_start = max(s, m_start)
+                        m_end = min(e, m_end)
+
+                        feature_mask[b, 0, m_start:m_end] = 0
+
         feature_mask = feature_mask.to(self.device)
         sorted_idx = torch.argsort(feature_mask, dim=-1, descending=True)
         selected_idx = (feature_mask.squeeze() == 1).nonzero(as_tuple=False).squeeze()
