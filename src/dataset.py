@@ -9,7 +9,7 @@ from .utils import get_labels_start_end_time
 from scipy.ndimage import gaussian_filter1d
 
 class VideoProcessor():
-    def __init__(self, feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None):
+    def __init__(self, feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None, target_feature_dir=None):
         self.feature_dir = feature_dir
         self.label_dir = label_dir
         self.video_list = video_list
@@ -17,6 +17,9 @@ class VideoProcessor():
         self.sample_rate = sample_rate
         self.temporal_aug = temporal_aug
         self.boundary_smooth = boundary_smooth
+        
+        #DA
+        self.target_feature_dir = target_feature_dir
         
     def get_data_dict(self):
         assert(self.sample_rate > 0)
@@ -35,6 +38,12 @@ class VideoProcessor():
         for video in tqdm(self.video_list):
 
             feature_file = os.path.join(self.feature_dir, '{}.npy'.format(video))
+            
+            #DA
+            if self.target_feature_dir is not None:
+                target_feature_file = os.path.join(self.target_feature_dir, '{}.npy'.format(video))
+                data_dict[video]['target_feature_path'] = target_feature_file
+
             event_file = os.path.join(self.label_dir, '{}.txt'.format(video))
 
             event = np.loadtxt(event_file, dtype=str)
@@ -61,16 +70,28 @@ class VideoProcessor():
     def preprocess_video(self, video):
             feature = np.load(self.data_dict[video]['feature_path'], allow_pickle=True)#, mmap_mode='r')
 
+            #DA code
+            target_feature = None
+            if 'target_feature_path' in self.data_dict[video]:
+                target_feature = np.load(self.data_dict[video]['target_feature_path'], allow_pickle=True)
+
             if len(feature.shape) == 3: 
                 feature = np.swapaxes(feature, 0, 1)
+                if target_feature is not None: target_feature = np.swapaxes(target_feature, 0, 1)
             elif len(feature.shape) == 2:
                 feature = np.swapaxes(feature, 0, 1)
                 feature = np.expand_dims(feature, 0)
+                if target_feature is not None:
+                    target_feature = np.swapaxes(target_feature, 0, 1)
+                    target_feature = np.expand_dims(target_feature, 0)
             else:
                 raise Exception('Invalid Feature.')
-            
+
             min_len = min(feature.shape[1], self.data_dict[video]['event_seq_raw'].shape[0], self.data_dict[video]['boundary_seq_raw'].shape[0])
             feature = feature[:, :min_len, :]
+
+            if target_feature is not None:
+                target_feature = target_feature[:, :min_len, :]
             
             #FIX FOR NUMBER OF FRAMES - ANNOTATIONS INCONSISTENCY
             current_event_seq = self.data_dict[video]['event_seq_raw'][:min_len]
@@ -85,6 +106,12 @@ class VideoProcessor():
                     for offset in range(self.sample_rate)
                 ]
 
+                if target_feature is not None:
+                    target_feature = [
+                        target_feature[:,offset::self.sample_rate,:]
+                        for offset in range(self.sample_rate)
+                    ]
+
                 event_seq_ext = [
                     current_event_seq[offset::self.sample_rate]
                     for offset in range(self.sample_rate)
@@ -97,15 +124,26 @@ class VideoProcessor():
 
             else:
                 feature = [feature[:,::self.sample_rate,:]]
+
+                if target_feature is not None:
+                    target_feature = [target_feature[:,::self.sample_rate,:]]
+
                 event_seq_ext = [current_event_seq[::self.sample_rate]]
                 boundary_seq_ext = [current_boundary_seq[::self.sample_rate]]
                 
-            return {
+            out_dict = {
                 'feature': [torch.from_numpy(i.copy()).float() for i in feature],
                 'event_seq_ext': [torch.from_numpy(i).float() for i in event_seq_ext],
                 'boundary_seq_ext': [torch.from_numpy(i).float() for i in boundary_seq_ext],
                 'event_seq_raw_truncated': current_event_seq 
             }
+
+            if target_feature is not None:
+                 out_dict['target_feature'] = [torch.from_numpy(i.copy()).float() for i in target_feature]
+            else:
+                 out_dict['target_feature'] = None
+
+            return out_dict
 
     def get_boundary_seq(self, event_seq, boundary_smooth=None):
 
@@ -192,20 +230,38 @@ class VideoFeatureDataset(Dataset):
             feature = feature[temporal_rid]
             label = label[temporal_rid]
             boundary = boundary[temporal_rid]
+            target_feature = preprocessed_video['target_feature']
 
+
+            ##APPLY SAME TEMPORAL/SPATIAL AUGMENTATION TO TARGET DOMAIN in case of DA
+            if target_feature is not None:
+                target_feature = target_feature[temporal_rid]
+
+            
             spatial_aug_num = feature.shape[0]
             spatial_rid = random.randint(0, spatial_aug_num - 1) # a<=x<=b
             feature = feature[spatial_rid]
 
+            if target_feature is not None:
+                target_feature = target_feature[spatial_rid]
+
             if len(feature.shape) == 2:
                 feature = feature.transpose(0, 1)
+                if target_feature is not None: target_feature = target_feature.transpose(0, 1)
             elif len(feature.shape) == 3:
                 feature = feature.transpose(1, 2)
+                if target_feature is not None: target_feature = target_feature.transpose(1, 2)
             else:
                 raise ValueError(f"Invalid feature shape: {feature.shape}")
 
             boundary = boundary.unsqueeze(0)
             boundary /= boundary.max()  # normalize again
+
+            if target_feature is not None:
+                return feature, label, boundary, video, target_feature
+            else:
+                return feature, label, boundary, video
+
 
         if self.mode == 'test':
             label = preprocessed_video['event_seq_raw_truncated']
@@ -215,4 +271,4 @@ class VideoFeatureDataset(Dataset):
             label = label.unsqueeze(0)   # 1 X T'
             boundary = [i.unsqueeze(0).unsqueeze(0) for i in boundary]   # [1 x 1 x T]
 
-        return feature, label, boundary, video
+            return feature, label, boundary, video

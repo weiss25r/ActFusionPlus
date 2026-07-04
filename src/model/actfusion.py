@@ -9,6 +9,7 @@ from scipy.ndimage import gaussian_filter1d
 from .backbone import EncoderModel, DecoderModel
 from .diffusion import GaussianDiffusion
 from .diffusion_utils import *
+from .grl import GradientReversalFn, GRLayer
 
 class ActFusion(nn.Module):
     def __init__(self, encoder_params, decoder_params, diffusion_params, num_classes, device, args=None):
@@ -23,6 +24,16 @@ class ActFusion(nn.Module):
 
         self.detach_decoder = diffusion_params['detach_decoder']
         self.cond_types = diffusion_params['cond_types']
+
+        self.grl = GRLayer()
+
+        self.domain_discriminator = nn.Sequential(
+            nn.Conv1d(768, 64, kernel_size=1),
+            nn.ReLU(),
+            nn.Dropout(p=0.5),
+            nn.Conv1d(64, 1, kernel_size=1),
+        )
+
 
         self.use_instance_norm = encoder_params['use_instance_norm']
         if self.use_instance_norm:
@@ -201,7 +212,7 @@ class ActFusion(nn.Module):
     def get_training_loss(self, video_feats, event_gt, boundary_gt,
           encoder_ce_criterion, encoder_mse_criterion, encoder_boundary_criterion,
           decoder_ce_criterion, decoder_mse_criterion, decoder_boundary_criterion,
-          soft_label, args=None):
+          soft_label, target_feats = None, alpha = None, args=None):
 
         if self.use_instance_norm:
             video_feats = self.ins_norm(video_feats)
@@ -238,6 +249,29 @@ class ActFusion(nn.Module):
 
         encoder_boundary_loss = torch.tensor(0).to(self.device) # No boundary loss for encoder
         encoder_ce_loss = encoder_ce_loss.mean()
+
+        """DOMAIN ADAPTATION - DOMAIN CLASSIFICATION LOSS COMPUTATION"""
+
+        if target_feats is not None and alpha is not None:
+            if self.use_instance_norm:
+                target_feats = self.ins_norm(target_feats)
+            
+            _, backbone_feats_target = self.encoder(target_feats, get_features=True)
+            logits_source = self.get_domain_logits(backbone_feats, alpha)
+            logits_target = self.get_domain_logits(backbone_feats_target, alpha)
+
+            labels_source = torch.zeros_like(logits_source)
+            labels_target = torch.ones_like(logits_target)
+
+            bce_criterion = nn.BCEWithLogitsLoss()
+            loss_domain_source = bce_criterion(logits_source, labels_source)
+            loss_domain_target = bce_criterion(logits_target, labels_target)
+            
+            da_weight = 20.0
+
+            domain_loss = (loss_domain_source + loss_domain_target) * da_weight
+        else:
+            domain_loss = torch.tensor(0.0).to(self.device)
 
         # prepare the targets for the decoder
         event_diffused, noise, t = self.gaussian_diffusion.prepare_targets(event_gt)
@@ -283,6 +317,7 @@ class ActFusion(nn.Module):
             'decoder_ce_loss': decoder_ce_loss,
             'decoder_mse_loss': decoder_mse_loss,
             'decoder_boundary_loss': decoder_boundary_loss,
+            'domain_loss': domain_loss
         }
 
         return loss_dict
@@ -377,3 +412,9 @@ class ActFusion(nn.Module):
 
         return x_return
 
+    def get_domain_logits(self, backbone_feats, alpha):
+        reversed_feats = self.grl(backbone_feats, alpha)
+
+        domain_logits = self.domain_discriminator(reversed_feats)
+
+        return domain_logits.squeeze(1)

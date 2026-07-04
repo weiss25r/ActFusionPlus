@@ -103,12 +103,29 @@ class Trainer:
 
         loss_weights = self.model_params['loss_weights']
         batch_size = self.model_params['batch_size']
+        print("BATCH_SIZE: ", batch_size)
+
+        total_steps = self.model_params['num_epochs'] * len(train_train_loader)
 
         for epoch in range(restore_epoch+1, self.model_params['num_epochs']):
             self.model.train()
             epoch_running_loss = 0
+            epoch_domain_loss = 0
             for _, data in enumerate(train_train_loader):
-                feature, label, boundary, video = data
+
+                if len(data) == 5:
+                    feature, label, boundary, video, target_feature = data
+
+                    target_feature = target_feature.to(device)
+                    target_feature = F.normalize(target_feature, p=2, dim=1)
+
+                    p = float(step) / total_steps
+                    alpha = 2. / (1. + np.exp(-10 * p)) -1
+                else:
+                    feature, label, boundary, video = data
+                    target_feature = None
+                    alpha = None
+                
                 feature, label, boundary = feature.to(device), label.to(device), boundary.to(device)
 
                 feature = F.normalize(feature, p=2, dim=1)
@@ -123,6 +140,8 @@ class Trainer:
                     decoder_mse_criterion=mse_criterion,
                     decoder_boundary_criterion=bce_criterion,
                     soft_label=self.model_params['soft_label'],
+                    target_feats=target_feature,
+                    alpha=alpha,
                     args=self.user_args
                 )
 
@@ -136,17 +155,21 @@ class Trainer:
                 total_loss = 0
 
                 for k,v in loss_dict.items():
-                    total_loss += loss_weights[k] * v
+                    weight = loss_weights.get(k, 1.0)
+                    total_loss += weight * v
 
                 if result_dir:
                     for k,v in loss_dict.items():
-                        logger.add_scalar(f'Train-{k}', loss_weights[k] * v.item() / batch_size, step)
+                        logger.add_scalar(f'Train-{k}', loss_weights.get(k, 1.0) * v.item() / batch_size, step)
                     logger.add_scalar('Train-Total', total_loss.item() / batch_size, step)
 
                 total_loss /= batch_size
                 total_loss.backward()
 
                 epoch_running_loss += total_loss.item()
+
+                if "domain_loss" in loss_dict:
+                    epoch_domain_loss += loss_dict['domain_loss'].item() / batch_size
 
                 if step % batch_size == 0:
                     optimizer.step()
@@ -155,19 +178,32 @@ class Trainer:
                 step += 1
 
             epoch_running_loss /= len(train_dataset)
+
+            epoch_domain_loss /= len(train_dataset)
+
             current_lr = scheduler.get_last_lr()[0]
+
             wandb.log({"learning_rate": current_lr})
         
             scheduler.step()
 
-            wandb.log({
+            wandb_log_dict ={
                 "loss": epoch_running_loss,
-            })
+            }
 
-            print(f'Epoch {epoch} - Running Loss {epoch_running_loss}')
+            if epoch_domain_loss > 0:
+                wandb_log_dict['domain_loss'] = epoch_domain_loss
+            
+            wandb.log(wandb_log_dict)
+            
+            print_msg = f'Epoch {epoch} - Running Loss {epoch_running_loss:.5f}'
+
+            if epoch_domain_loss > 0:
+                print_msg += f' | Domain Loss {epoch_domain_loss:.5f}'
+
+            print(print_msg)
 
             if result_dir:
-
                 state = {
                     'model': self.model.state_dict(),
                     'optimizer': optimizer.state_dict(),
@@ -465,7 +501,7 @@ class Trainer:
         if self.user_args.ckpt:
             model_path = os.path.join('ckpt', self.model_params['dataset_name'], 'split'+str(self.user_args.split)+'.model')
         else:
-            model_path = os.path.join('result', self.user_args.result_dir, self.model_params['dataset_name'], 'split'+str(self.user_args.split), 'best_combined_model.pth')
+            model_path = os.path.join('result', self.user_args.result_dir, self.model_params['dataset_name'], 'split'+str(self.user_args.split), 'best_tas_model.pth')
         print("model loaded:", model_path)
         result_path = os.path.join('result', self.user_args.result_dir, self.model_params['dataset_name'], 'split'+str(self.user_args.split))
 
