@@ -9,7 +9,7 @@ from .utils import get_labels_start_end_time
 from scipy.ndimage import gaussian_filter1d
 
 class VideoProcessor():
-    def __init__(self, feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None, target_feature_dir=None):
+    def __init__(self, feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None, target_feature_dir=None, target_video_map=None):
         self.feature_dir = feature_dir
         self.label_dir = label_dir
         self.video_list = video_list
@@ -20,6 +20,7 @@ class VideoProcessor():
         
         #DA
         self.target_feature_dir = target_feature_dir
+        self.target_video_map = target_video_map
         
     def get_data_dict(self):
         assert(self.sample_rate > 0)
@@ -41,7 +42,8 @@ class VideoProcessor():
             
             #DA
             if self.target_feature_dir is not None:
-                target_feature_file = os.path.join(self.target_feature_dir, '{}.npy'.format(video))
+                target_video_name = self.target_video_map[video] if self.target_video_map is not None else video
+                target_feature_file = os.path.join(self.target_feature_dir, '{}.npy'.format(target_video_name))
                 data_dict[video]['target_feature_path'] = target_feature_file
 
             event_file = os.path.join(self.label_dir, '{}.txt'.format(video))
@@ -88,15 +90,19 @@ class VideoProcessor():
                 raise Exception('Invalid Feature.')
 
             min_len = min(feature.shape[1], self.data_dict[video]['event_seq_raw'].shape[0], self.data_dict[video]['boundary_seq_raw'].shape[0])
-            feature = feature[:, :min_len, :]
 
             if target_feature is not None:
-                target_feature = target_feature[:, :min_len, :]
+                min_len = min(min_len, target_feature.shape[1])
             
+            feature = feature[:, :min_len, :]
+
             #FIX FOR NUMBER OF FRAMES - ANNOTATIONS INCONSISTENCY
             current_event_seq = self.data_dict[video]['event_seq_raw'][:min_len]
             current_boundary_seq = self.data_dict[video]['boundary_seq_raw'][:min_len]
             
+            if target_feature is not None:
+                target_feature = target_feature[:, :min_len, :]
+
             assert(feature.shape[1] == current_boundary_seq.shape[0])
 
             if self.temporal_aug:

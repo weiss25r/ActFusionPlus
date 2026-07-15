@@ -3,12 +3,14 @@ import numpy as np
 from src.trainer import Trainer
 from src.dataset import VideoFeatureDataset
 from src.utils import read_mapping_dict
+from src.utils import build_mismatched_map
 
 class ActFusionPipeline:
-    def __init__(self, visible_devices):
+    def __init__(self, visible_devices, seed):
         if visible_devices != None:
             os.environ['CUDA_VISIBLE_DEVICES'] = visible_devices
             print("\n\nUSING DEVICE: ", visible_devices)
+        self.seed = seed
 
     def run(self, user_args):
         config = ActFusionConfig(config_file=user_args.config)
@@ -101,6 +103,13 @@ class ActFusionPipeline:
                 if run_params['domain_adaptation']['use_da'] == True:
                     print("-- DOMAIN ADAPTATION ENABLED --")
                     train_preprocessor_params['target_feature_dir'] = run_params['domain_adaptation']['target_domain_features_dir']
+
+                if run_params['domain_adaptation'].get("misalignment", False):
+                    print("MISALIGNMENT ON")
+                    mapping = build_mismatched_map(train_video_list, seed=self.seed)
+                    train_preprocessor_params['target_video_map'] = mapping
+                    wandb.config.update({'misalignment_mapping': mapping})
+
                 else:
                     print("-- DOMAIN ADAPTATION DISABLED --")
             if dirs != None:

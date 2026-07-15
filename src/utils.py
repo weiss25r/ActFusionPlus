@@ -252,3 +252,18 @@ def get_unique_list_gt(input_list, actions_dict):
                 unique_list_len.append(idx)
     return unique_list, unique_list_len
 
+
+def build_mismatched_map(video_list, seed):
+    print("Creating misalignement mapping with seed: ", seed)
+    rng = random.Random(seed)
+    shuffled = video_list.copy()
+
+    while True:
+        rng.shuffle(shuffled)
+
+        if all(a != b for a,b in zip(video_list, shuffled)):
+            break
+    
+    mapping = dict(zip(video_list, shuffled))
+    
+    return mapping
