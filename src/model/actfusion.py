@@ -76,126 +76,128 @@ class ActFusion(nn.Module):
 
         return pred_noise, x_start
 
-    def mask(self, x, event_gt=None, boundary_gt=None, cond_type='full', args=None):
+    def mask(self, x, event_gt=None, boundary_gt=None, cond_type='full', args=None, precomputed_mask = None):
+        if precomputed_mask != None:
+            feature_mask = precomputed_mask
+        else:
+            if cond_type == 'zero':
+                mask_tokens = self.mask_token.repeat(x.shape[0], 1, x.shape[2]).to(self.device)
+                return mask_tokens
+            elif cond_type == 'full':
+                feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
+            elif cond_type == 'boundary05-':
+                feature_mask = (boundary_gt < 0.5).float() # maybe try 0.1
+            elif cond_type == 'boundary03-':
+                feature_mask = (boundary_gt < 0.3).float() # maybe try 0.1
+            elif cond_type == 'segment=1':
+                event_gt = torch.argmax(event_gt, dim=1, keepdim=True).long() # 1, 1, T
+                events = torch.unique(event_gt)
+                random_event = np.random.choice(events.cpu().numpy())
+                feature_mask = (event_gt != random_event).float()
+            elif cond_type == 'segment=2':
+                event_gt = torch.argmax(event_gt, dim=1, keepdim=True).long() # 1, 1, T
+                events = torch.unique(event_gt)
+                random_event_1 = np.random.choice(events.cpu().numpy())
+                random_event_2 = np.random.choice(events.cpu().numpy())
+                feature_mask = (event_gt != random_event_1).float() * (event_gt != random_event_2).float()
+            elif cond_type == 'ant':
+                obs_ps = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+                obs_p = random.choice(obs_ps)
+                obs_len = int(x.shape[2]*obs_p)
+                feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
+                feature_mask[:, :, obs_len:] = 0
+            elif cond_type == 'random_num_patch':
+                patch_size = getattr(args, 'patch_size', 10)  # fallback to default
+                n_mask_default = getattr(args, 'n_mask', 10)  # fallback to default
+                max_idx = int(event_gt.shape[2]/patch_size)
+                n_mask2 = random.randint(5, n_mask_default)
+                n_mask = min(n_mask2, max(max_idx, max_idx-n_mask2))
+                start_idx = random.sample(range(0, max_idx), n_mask)
+                feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
+                for idx in start_idx:
+                    feature_mask[:, :, idx*patch_size:idx*patch_size + patch_size] = 0
+            elif cond_type == 'random_patch':
+                patch_size = getattr(args, 'patch_size', 10)  # fallback to default
+                max_idx = int(event_gt.shape[2]/patch_size)
+                n_mask2 = getattr(args, 'n_mask', 10)
+                n_mask = min(n_mask2, max(max_idx, max_idx-n_mask2))
+                start_idx = random.sample(range(0, max_idx), n_mask)
+                feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
+                for idx in start_idx:
+                    feature_mask[:, :, idx*patch_size:idx*patch_size + patch_size] = 0
 
-        if cond_type == 'zero':
-            mask_tokens = self.mask_token.repeat(x.shape[0], 1, x.shape[2]).to(self.device)
-            return mask_tokens
-        elif cond_type == 'full':
-            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
-        elif cond_type == 'boundary05-':
-            feature_mask = (boundary_gt < 0.5).float() # maybe try 0.1
-        elif cond_type == 'boundary03-':
-            feature_mask = (boundary_gt < 0.3).float() # maybe try 0.1
-        elif cond_type == 'segment=1':
-            event_gt = torch.argmax(event_gt, dim=1, keepdim=True).long() # 1, 1, T
-            events = torch.unique(event_gt)
-            random_event = np.random.choice(events.cpu().numpy())
-            feature_mask = (event_gt != random_event).float()
-        elif cond_type == 'segment=2':
-            event_gt = torch.argmax(event_gt, dim=1, keepdim=True).long() # 1, 1, T
-            events = torch.unique(event_gt)
-            random_event_1 = np.random.choice(events.cpu().numpy())
-            random_event_2 = np.random.choice(events.cpu().numpy())
-            feature_mask = (event_gt != random_event_1).float() * (event_gt != random_event_2).float()
-        elif cond_type == 'ant':
-            obs_ps = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
-            obs_p = random.choice(obs_ps)
-            obs_len = int(x.shape[2]*obs_p)
-            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
-            feature_mask[:, :, obs_len:] = 0
-        elif cond_type == 'random_num_patch':
-            patch_size = getattr(args, 'patch_size', 10)  # fallback to default
-            n_mask_default = getattr(args, 'n_mask', 10)  # fallback to default
-            max_idx = int(event_gt.shape[2]/patch_size)
-            n_mask2 = random.randint(5, n_mask_default)
-            n_mask = min(n_mask2, max(max_idx, max_idx-n_mask2))
-            start_idx = random.sample(range(0, max_idx), n_mask)
-            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
-            for idx in start_idx:
-                feature_mask[:, :, idx*patch_size:idx*patch_size + patch_size] = 0
-        elif cond_type == 'random_patch':
-            patch_size = getattr(args, 'patch_size', 10)  # fallback to default
-            max_idx = int(event_gt.shape[2]/patch_size)
-            n_mask2 = getattr(args, 'n_mask', 10)
-            n_mask = min(n_mask2, max(max_idx, max_idx-n_mask2))
-            start_idx = random.sample(range(0, max_idx), n_mask)
-            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
-            for idx in start_idx:
-                feature_mask[:, :, idx*patch_size:idx*patch_size + patch_size] = 0
-
-        elif cond_type in ['center_gauss05', 'center_gauss03', 'inv_center_gauss05', 'inv_center_gauss03']:
-            threshold = 0.5 if '05' in cond_type else 0.3
-            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]), device=self.device)
-            event_gt_labels = torch.argmax(event_gt, dim=1)
-            
-            for b in range(x.shape[0]):
-                labels_b = event_gt_labels[b].cpu().numpy()
-                T = len(labels_b)
+            elif cond_type in ['center_gauss05', 'center_gauss03', 'inv_center_gauss05', 'inv_center_gauss03']:
+                threshold = 0.5 if '05' in cond_type else 0.3
+                feature_mask = torch.ones((x.shape[0], 1, x.shape[2]), device=self.device)
+                event_gt_labels = torch.argmax(event_gt, dim=1)
                 
-                changes = np.where(labels_b[:-1] != labels_b[1:])[0] + 1
-                starts = np.insert(changes, 0, 0)
-                ends = np.append(changes, T)
-                
-                center_gt = np.zeros(T)
-                
-                for s, e in zip(starts, ends):
-                    length = e - s
-                    if length >= 15: 
-                        center = s + (length / 2.0)
-                        
-                        sigma = max(length / 6.0, 1.0) 
-                        
-                        x_axis = np.arange(s, e)
-                        gauss = np.exp(-0.5 * ((x_axis - center) / sigma) ** 2)
-                        
-                        center_gt[s:e] = gauss
-                
-                center_gt_tensor = torch.from_numpy(center_gt).to(self.device).float()
-                
-                if cond_type.startswith('center_gauss'):
-                    mask_b = (center_gt_tensor < threshold).float()
-                else:
-                    mask_b = (center_gt_tensor >= threshold).float()
+                for b in range(x.shape[0]):
+                    labels_b = event_gt_labels[b].cpu().numpy()
+                    T = len(labels_b)
                     
-                feature_mask[b, 0, :] = mask_b
+                    changes = np.where(labels_b[:-1] != labels_b[1:])[0] + 1
+                    starts = np.insert(changes, 0, 0)
+                    ends = np.append(changes, T)
+                    
+                    center_gt = np.zeros(T)
+                    
+                    for s, e in zip(starts, ends):
+                        length = e - s
+                        if length >= 15: 
+                            center = s + (length / 2.0)
+                            
+                            sigma = max(length / 6.0, 1.0) 
+                            
+                            x_axis = np.arange(s, e)
+                            gauss = np.exp(-0.5 * ((x_axis - center) / sigma) ** 2)
+                            
+                            center_gt[s:e] = gauss
+                    
+                    center_gt_tensor = torch.from_numpy(center_gt).to(self.device).float()
+                    
+                    if cond_type.startswith('center_gauss'):
+                        mask_b = (center_gt_tensor < threshold).float()
+                    else:
+                        mask_b = (center_gt_tensor >= threshold).float()
+                        
+                    feature_mask[b, 0, :] = mask_b
 
-        elif cond_type == "center_og":
-            feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
+            elif cond_type == "center_og":
+                feature_mask = torch.ones((x.shape[0], 1, x.shape[2]))
 
-            event_gt_labels = torch.argmax(event_gt, dim=1)
-            
-            mask_ratio = 0.33
-            min_len = 15
+                event_gt_labels = torch.argmax(event_gt, dim=1)
+                
+                mask_ratio = 0.33
+                min_len = 15
 
-            for b in range(x.shape[0]):
-                labels_b = event_gt_labels[b].cpu().numpy()
+                for b in range(x.shape[0]):
+                    labels_b = event_gt_labels[b].cpu().numpy()
 
-                t = len(labels_b)
+                    t = len(labels_b)
 
-                changes = np.where(labels_b[:-1] != labels_b[1:])[0] + 1
-                starts = np.insert(changes, 0, 0)
-                ends = np.append(changes, t)
+                    changes = np.where(labels_b[:-1] != labels_b[1:])[0] + 1
+                    starts = np.insert(changes, 0, 0)
+                    ends = np.append(changes, t)
 
 
-                for s, e in zip(starts, ends):
-                    length = e - s
+                    for s, e in zip(starts, ends):
+                        length = e - s
 
-                    if length >= min_len:
-                        mask_width = int(length*mask_ratio)
+                        if length >= min_len:
+                            mask_width = int(length*mask_ratio)
 
-                        if mask_width == 0:
-                            continue
+                            if mask_width == 0:
+                                continue
 
-                        center = s + (length // 2)
+                            center = s + (length // 2)
 
-                        m_start = center - (mask_width // 2)
-                        m_end = m_start + mask_width
+                            m_start = center - (mask_width // 2)
+                            m_end = m_start + mask_width
 
-                        m_start = max(s, m_start)
-                        m_end = min(e, m_end)
+                            m_start = max(s, m_start)
+                            m_end = min(e, m_end)
 
-                        feature_mask[b, 0, m_start:m_end] = 0
+                            feature_mask[b, 0, m_start:m_end] = 0
 
         feature_mask = feature_mask.to(self.device)
         sorted_idx = torch.argsort(feature_mask, dim=-1, descending=True)
@@ -252,24 +254,38 @@ class ActFusion(nn.Module):
 
         """DOMAIN ADAPTATION - DOMAIN CLASSIFICATION LOSS COMPUTATION"""
 
-        if target_feats is not None and alpha is not None:
+        if target_feats is not None and alpha is not None:# and cond_type == "full":
             if self.use_instance_norm:
                 target_feats = self.ins_norm(target_feats)
             
-            _, backbone_feats_target = self.encoder(target_feats, get_features=True)
-            logits_source = self.get_domain_logits(backbone_feats, alpha)
-            logits_target = self.get_domain_logits(backbone_feats_target, alpha)
+            target_input_feats, _ = self.mask(target_feats, precomputed_mask=feature_mask)
+            _, backbone_feats_target = self.encoder(target_input_feats, get_features=True, mask=feature_mask)
 
-            labels_source = torch.zeros_like(logits_source)
-            labels_target = torch.ones_like(logits_target)
 
+            """
+            self.domain_norm = nn.InstanceNorm1d(768, affine=False, track_running_stats=False)
+            backbone_feats_norm = self.domain_norm(backbone_feats)
+            backbone_feats_target_norm = self.domain_norm(backbone_feats_target)
+            
+            logits_source = self.get_domain_logits(backbone_feats_norm, alpha)
+            logits_target = self.get_domain_logits(backbone_feats_target_norm, alpha)
+
+            #labels_source = torch.zeros_like(logits_source)
+            #labels_target = torch.ones_like(logits_target)
+            
+            labels_source = torch.full(logits_source.shape, 0.1, dtype=torch.float, device=self.device)
+            labels_target = torch.full(logits_target.shape, 0.9, dtype=torch.float, device=self.device)
+            
             bce_criterion = nn.BCEWithLogitsLoss()
             loss_domain_source = bce_criterion(logits_source, labels_source)
             loss_domain_target = bce_criterion(logits_target, labels_target)
             
-            da_weight = 20.0
+            da_weight = 3.0
 
             domain_loss = (loss_domain_source + loss_domain_target) * da_weight
+
+            """
+            domain_loss = (1-F.cosine_similarity(backbone_feats_target, backbone_feats.detach())).mean()
         else:
             domain_loss = torch.tensor(0.0).to(self.device)
 

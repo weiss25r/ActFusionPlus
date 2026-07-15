@@ -104,6 +104,7 @@ class ActFusionPipeline:
                 else:
                     print("-- DOMAIN ADAPTATION DISABLED --")
             if dirs != None:
+
                 val_preprocessor_params = {
                     'feature_dir':feature_dir,
                     'label_dir':label_dir,
@@ -113,7 +114,14 @@ class ActFusionPipeline:
                     'temporal_aug':run_params['temporal_aug'],
                     'boundary_smooth':run_params['boundary_smooth']
                 }
-                
+
+                #code to use target val set as val set
+                """
+                if run_params.get("domain_adaptation", None) is not None:
+                    print("VALIDATING ON TARGET VAL SET")
+                    val_preprocessor_params['feature_dir'] = run_params['domain_adaptation']["target_domain_features_dir"]
+                """
+
                 val_dataset = VideoFeatureDataset(val_preprocessor_params, num_classes, mode='test')
 
             train_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='train')

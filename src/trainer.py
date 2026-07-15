@@ -51,9 +51,19 @@ class Trainer:
         print("NUMBER OF EPOCHS: ", self.model_params['num_epochs'])
 
         #TODO: da documentare
+
+        """
         optimizer = optim.AdamW(self.model.parameters(), lr=self.model_params['learning_rate'],
                                 weight_decay=self.model_params['weight_decay'])
         optimizer.zero_grad()
+        """
+        
+        optimizer = optim.AdamW([
+            {'params': [p for n,p in self.model.named_parameters() if 'domain_discriminator' not in n]},
+            {'params': self.model.domain_discriminator.parameters(), 'lr': self.model_params['learning_rate'] * 0.1}
+            ], 
+            lr=self.model_params['learning_rate'], weight_decay=self.model_params['weight_decay']
+        )
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
@@ -119,8 +129,12 @@ class Trainer:
                     target_feature = target_feature.to(device)
                     target_feature = F.normalize(target_feature, p=2, dim=1)
 
-                    p = float(step) / total_steps
-                    alpha = 2. / (1. + np.exp(-10 * p)) -1
+                    #p = float(step) / total_steps
+                    #alpha = 2. / (1. + np.exp(-10 * p)) -1
+
+                    warmup_steps = total_steps *0.5
+                    alpha = min(1.0, float(step)/warmup_steps)
+                    wandb.log({"alpha": alpha})
                 else:
                     feature, label, boundary, video = data
                     target_feature = None
