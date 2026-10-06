@@ -95,7 +95,7 @@ Each experiment family has its own config folder under `configs/`:
 | DA (Source EXO, Target EGO)         | 69.52 ± 0.53    | 79.62 ± 0.21    | 79.86 ± 0.27    | 74.53 ± 0.42    | **56.39 ± 0.25**    |
 | MIS-DA (Source EGO, Target EXO)     | 25.37 ± 0.55    | 38.10 ± 0.77    | 26.23 ± 0.45    | 18.95 ± 0.72    | 8.29 ± 0.83         |
 | Joint (Train EGO + EXO)             | 73.19 ± 0.16    | 83.65 ± 0.23    | 83.32 ± 0.17    | 78.18 ± 0.18    | **60.42 ± 0.24**    |
-### Qualitative
+### Qualitative segmentation results
 The following figure provides qualitative segmentation results on video "100" EXO
 
 <img src = "./docs/frame_actions.png">
