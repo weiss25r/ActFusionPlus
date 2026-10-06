@@ -9,7 +9,7 @@ from .utils import get_labels_start_end_time
 from scipy.ndimage import gaussian_filter1d
 
 class VideoProcessor():
-    def __init__(self, feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None, target_feature_dir=None, target_video_map=None):
+    def __init__(self, feature_dir, label_dir, video_list, event_list, sample_rate=4, temporal_aug=True, boundary_smooth=None, target_feature_dir=None, target_video_map=None, video_to_realname=None, video_to_featdir=None):
         self.feature_dir = feature_dir
         self.label_dir = label_dir
         self.video_list = video_list
@@ -21,7 +21,18 @@ class VideoProcessor():
         #DA
         self.target_feature_dir = target_feature_dir
         self.target_video_map = target_video_map
-        
+
+        self.video_to_realname = video_to_realname
+        self.video_to_featdir = video_to_featdir
+
+        if self.video_to_realname is None:
+            self.video_to_realname = {}
+            self.video_to_featdir = {}
+        else:
+            print("realname == None: ", self.video_to_realname is None)
+            print("featdir == None: ", self.video_to_featdir == None)
+            print("TUTTO OK")
+
     def get_data_dict(self):
         assert(self.sample_rate > 0)
 
@@ -38,7 +49,10 @@ class VideoProcessor():
 
         for video in tqdm(self.video_list):
 
-            feature_file = os.path.join(self.feature_dir, '{}.npy'.format(video))
+            real_name = self.video_to_realname.get(video, video)
+            feat_dir = self.video_to_featdir.get(video, self.feature_dir)
+
+            feature_file = os.path.join(feat_dir, '{}.npy'.format(real_name))
             
             #DA
             if self.target_feature_dir is not None:
@@ -46,7 +60,7 @@ class VideoProcessor():
                 target_feature_file = os.path.join(self.target_feature_dir, '{}.npy'.format(target_video_name))
                 data_dict[video]['target_feature_path'] = target_feature_file
 
-            event_file = os.path.join(self.label_dir, '{}.txt'.format(video))
+            event_file = os.path.join(self.label_dir, '{}.txt'.format(real_name))
 
             event = np.loadtxt(event_file, dtype=str)
             frame_num = len(event)
@@ -201,7 +215,9 @@ class VideoFeatureDataset(Dataset):
 
         self.class_num = class_num
         self.mode = mode
+
         self.video_processor = VideoProcessor(**video_processor_params)
+
         self.data_dict = self.video_processor.get_data_dict()
         self.video_list = [i for i in self.data_dict.keys()]
 

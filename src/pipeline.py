@@ -99,7 +99,28 @@ class ActFusionPipeline:
                 'boundary_smooth':run_params['boundary_smooth'],
             }
 
-            if run_params.get("domain_adaptation", None) is not None:
+            joint_training = run_params.get('joint_training', False)
+
+            if joint_training:
+                print("JOINT DOMAIN TRAINING ENABLED")
+                target_feature_dir = run_params["domain_adaptation"]["target_domain_features_dir"]
+                
+                source_keys = list(train_video_list)
+                target_keys = [f'exo__{v}' for v in train_video_list]
+
+                video_to_realname = {k: k for k in source_keys}
+                video_to_realname.update({k: v for k, v in zip(target_keys, train_video_list)})
+
+                video_to_featdir = {k: feature_dir for k in source_keys}
+                video_to_featdir.update({k: target_feature_dir for k in target_keys})
+
+                train_preprocessor_params['video_list'] = source_keys + target_keys
+
+                train_preprocessor_params['video_to_realname'] = video_to_realname
+                train_preprocessor_params['video_to_featdir'] = video_to_featdir
+
+
+            elif run_params.get("domain_adaptation", None) is not None:
                 if run_params['domain_adaptation']['use_da'] == True:
                     print("-- DOMAIN ADAPTATION ENABLED --")
                     train_preprocessor_params['target_feature_dir'] = run_params['domain_adaptation']['target_domain_features_dir']
@@ -132,7 +153,7 @@ class ActFusionPipeline:
                 """
 
                 val_dataset = VideoFeatureDataset(val_preprocessor_params, num_classes, mode='test')
-
+            
             train_dataset = VideoFeatureDataset(train_preprocessor_params, num_classes, mode='train')
 
         dataset_name = run_params['dataset_name']

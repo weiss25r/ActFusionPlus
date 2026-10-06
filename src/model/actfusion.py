@@ -258,36 +258,18 @@ class ActFusion(nn.Module):
             if self.use_instance_norm:
                 target_feats = self.ins_norm(target_feats)
             
+
             target_input_feats, _ = self.mask(target_feats, precomputed_mask=feature_mask)
             _, backbone_feats_target = self.encoder(target_input_feats, get_features=True, mask=feature_mask)
 
 
             """
-            self.domain_norm = nn.InstanceNorm1d(768, affine=False, track_running_stats=False)
-            backbone_feats_norm = self.domain_norm(backbone_feats)
-            backbone_feats_target_norm = self.domain_norm(backbone_feats_target)
-            
-            logits_source = self.get_domain_logits(backbone_feats_norm, alpha)
-            logits_target = self.get_domain_logits(backbone_feats_target_norm, alpha)
-
-            #labels_source = torch.zeros_like(logits_source)
-            #labels_target = torch.ones_like(logits_target)
-            
-            labels_source = torch.full(logits_source.shape, 0.1, dtype=torch.float, device=self.device)
-            labels_target = torch.full(logits_target.shape, 0.9, dtype=torch.float, device=self.device)
-            
-            bce_criterion = nn.BCEWithLogitsLoss()
-            loss_domain_source = bce_criterion(logits_source, labels_source)
-            loss_domain_target = bce_criterion(logits_target, labels_target)
-            
-            da_weight = 3.0
-
-            domain_loss = (loss_domain_source + loss_domain_target) * da_weight
-
+            DOMAIN ADAPTATION METHOD - COSINE SIMILARITY
             """
             domain_loss = (1-F.cosine_similarity(backbone_feats_target, backbone_feats.detach())).mean()
         else:
             domain_loss = torch.tensor(0.0).to(self.device)
+            
 
         # prepare the targets for the decoder
         event_diffused, noise, t = self.gaussian_diffusion.prepare_targets(event_gt)
