@@ -253,6 +253,7 @@ def get_unique_list_gt(input_list, actions_dict):
     return unique_list, unique_list_len
 
 
+"""To be used for misalignment"""
 def build_mismatched_map(video_list, seed):
     print("Creating misalignement mapping with seed: ", seed)
     rng = random.Random(seed)

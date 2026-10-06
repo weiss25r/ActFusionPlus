@@ -1,0 +1,186 @@
+{
+  "pos": {
+    "value": "rel"
+  },
+  "ckpt": {
+    "value": false
+  },
+  "seed": {
+    "value": 42
+  },
+  "test": {
+    "value": false
+  },
+  "split": {
+    "value": 1
+  },
+  "_wandb": {
+    "value": {
+      "m": [],
+      "t": {
+        "1": [
+          1
+        ],
+        "2": [
+          1
+        ],
+        "3": [
+          1,
+          2,
+          17
+        ],
+        "4": "3.9.2",
+        "5": "0.23.1",
+        "12": "0.23.1",
+        "13": "linux-x86_64"
+      },
+      "cli_version": "0.23.1",
+      "python_version": "3.9.2"
+    }
+  },
+  "config": {
+    "value": "configs/DA/exo_baseline.json"
+  },
+  "n_mask": {
+    "value": 10
+  },
+  "naming": {
+    "value": "ENIGMA-360"
+  },
+  "log_freq": {
+    "value": 10
+  },
+  "batch_size": {
+    "value": 32
+  },
+  "num_epochs": {
+    "value": 250
+  },
+  "patch_size": {
+    "value": 10
+  },
+  "result_dir": {
+    "value": "result"
+  },
+  "soft_label": {
+    "value": 4
+  },
+  "postprocess": {
+    "value": {
+      "type": "median",
+      "value": 60
+    }
+  },
+  "sample_rate": {
+    "value": 2
+  },
+  "dataset_name": {
+    "value": "ENIGMA-360"
+  },
+  "loss_weights": {
+    "value": {
+      "decoder_ce_loss": 0.5,
+      "encoder_ce_loss": 0.5,
+      "decoder_mse_loss": 0.025,
+      "encoder_mse_loss": 0.025,
+      "decoder_boundary_loss": 0.1,
+      "encoder_boundary_loss": 0
+    }
+  },
+  "temporal_aug": {
+    "value": true
+  },
+  "weight_decay": {
+    "value": 0.05
+  },
+  "dataset_paths": {
+    "value": {
+      "label_dir": "/dir/to/ENIGMA-360/annotations/action_labels",
+      "val_split": "/dir/to/ENIGMA-360/annotations/val.txt",
+      "test_split": "/dir/to/ENIGMA-360/annotations/test.txt",
+      "feature_dir": "/dir/to/ENIGMA-360/features/dinov2/exo",
+      "train_split": "/dir/to/ENIGMA-360/annotations/train.txt",
+      "mapping_file": "./configs/mapping.txt"
+    }
+  },
+  "learning_rate": {
+    "value": 0.0003
+  },
+  "root_data_dir": {
+    "value": "/datasets/ENIGMA-360"
+  },
+  "decoder_params": {
+    "value": {
+      "num_f_maps": 128,
+      "num_layers": 8,
+      "kernel_size": 5,
+      "dropout_rate": 0.1,
+      "time_emb_dim": 512
+    }
+  },
+  "encoder_params": {
+    "value": {
+      "input_dim": 1024,
+      "num_f_maps": 256,
+      "num_layers": 12,
+      "kernel_size": 5,
+      "use_instance_norm": false,
+      "normal_dropout_rate": 0.5,
+      "channel_dropout_rate": 0.1,
+      "feature_layer_indices": [
+        7,
+        8,
+        9
+      ],
+      "temporal_dropout_rate": 0.1
+    }
+  },
+  "boundary_smooth": {
+    "value": 3
+  },
+  "class_weighting": {
+    "value": true
+  },
+  "log_val_results": {
+    "value": true
+  },
+  "diffusion_params": {
+    "value": {
+      "snr_scale": 0.5,
+      "timesteps": 1000,
+      "cond_types": [
+        "ant",
+        "full",
+        "boundary03-",
+        "segment=1",
+        "random_patch"
+      ],
+      "detach_decoder": false,
+      "ddim_sampling_eta": 1,
+      "sampling_timesteps": 25
+    }
+  },
+  "domain_adaptation": {
+    "value": {
+      "use_da": true,
+      "misalignment": true,
+      "target_domain_features_dir": "target_features_dir"
+    }
+  },
+
+  "joint_training": false,
+
+  "log_train_results": {
+    "value": false
+  },
+
+  "set_sampling_seed": {
+    "value": true
+  },
+  "wandb_project_name": {
+    "value": "BASELINE-ENIGMA-360-{VIEW}"
+  },
+  "lr_scheduler_eta_min": {
+    "value": 0.000001
+  }
+}
